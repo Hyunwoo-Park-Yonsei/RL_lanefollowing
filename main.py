@@ -159,7 +159,8 @@ def main():
             policy.startTraining()
         print("episode num", episode_num)
         print("total reward", episode_reward)
-        print("getParams", policy.getParams())
+        print("q_loss", policy.getQLoss(), "mu_loss", policy.getMuLoss())
+        # print("getParams", policy.getParams())
 
         # if done or keyboard_listener.reset_flag:
         if done:
