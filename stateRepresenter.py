@@ -12,6 +12,7 @@ class StateRepresenter(nn.Module):
     # self.conv4 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=(1, 1))
     self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
     self.fc1 = nn.Linear(128, 12)
+    self.ELU = torch.nn.ELU()
   
   def forward(self, x):
     # print("연산 전", x.size())
@@ -24,7 +25,8 @@ class StateRepresenter(nn.Module):
     # x = self.pool(F.relu(self.conv4(x)))
     # print("conv4 연산 후",x.size())
     x = x.view(x.size(0), -1) # flatten
-    x = self.fc1(x)
+    # print("x", x.size())
+    x = self.ELU(self.fc1(x))
     # print("final output", x.size())
     return x
 

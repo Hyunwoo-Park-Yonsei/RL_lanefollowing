@@ -7,7 +7,6 @@ from keyboard import KeyboardEventHandler
 import threading
 import numpy as np
 from datetime import datetime
-from highway_env.vehicle.behavior import IDMVehicle
 import string
 import model
 import torch
@@ -55,7 +54,8 @@ def main():
     generate_data = False
     num_of_other_vehicles = 0
     num_of_lanes = 5
-    env = gym.make('highway-v0')
+    env = gym.make('racetrack-v0')
+    # env = gym.make('highway-v1')
     # env.config["show_trajectories"] = True
     env.config["vehicles_count"] = num_of_other_vehicles
     env.config["simulation_frequency"] = 10
@@ -72,34 +72,10 @@ def main():
         'offroad_terminal': True,
         # 'high_speed_reward': 0.001,
         'screen_height': 600,
-        'screen_width': 2400,
+        'screen_width': 600,
         'initial_lane_id': 2,
         'initial_speed': -1,
-        # "observation": {
-        #     "type": "Kinematics",
-        #     "vehicles_count": num_of_other_vehicles,
-        #     "features": ["presence", "x", "y", "vx", "vy", "heading","lat_off"],
-        #     "absolute": True,
-        #     "normalize": False,
-        #     "order": "sorted"
-        # }
-
-        # "observation": {
-        # "type": "OccupancyGrid",
-        # "vehicles_count": num_of_other_vehicles,
-        # # "vehicles_count": 15,
-        # # "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
-        # "features": ["presence", "x", "y", "lat_off", "heading","ang_off","vx", "vy"],
-        # "features_range": {
-        #     "x": [-100, 100],
-        #     "y": [-100, 100],
-        #     "vx": [-20, 20],
-        #     "vy": [-20, 20]
-        # },
-        # "grid_size": [[-25, 25], [-25, 25]],
-        # "grid_step": [2.5, 2.5],
-        # "absolute": False
-        # }
+        'other_vehicles': 0,
         "observation":{
            "type": "GrayscaleObservation",
            "observation_shape": (64, 32),
@@ -139,15 +115,26 @@ def main():
         
         time_step = 0
         while time_step < max_time_step and not done:
-            action = policy.getAction(state)
-            s_prime, reward, done, info = env.step(action)
             ego = env.road.vehicles[0].position
             ego_heading = env.road.vehicles[0].heading / math.pi
             ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
+            action = policy.getAction(state, ego_speed)
+            s_prime, reward, done, info = env.step(action)
+            
             reward = ego_speed * 0.05
-            policy.insertMemory(state, action, reward, s_prime, done)
+            policy.insertMemory(state, action, reward, s_prime, done, ego_speed)
             episode_reward += reward
             state = s_prime
+
+            # fig, axes = plt.subplots(ncols=4, figsize=(12, 5))
+            # fig_state = state
+            # fig_state = fig_state.reshape(64,32)
+            # # print("fig size", np.shape(fig_state))
+            # for i, ax in enumerate(axes.flat):
+            #     ax.imshow(fig_state, cmap=plt.get_cmap('gray'))
+            # plt.show()
+
+
             time_step +=1
             env.render()
         writer.add_scalar("Q Loss/episode", policy.getQLoss(), episode_num)

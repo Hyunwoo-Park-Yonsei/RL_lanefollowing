@@ -10,14 +10,14 @@ from stateRepresenter import StateRepresenter
 import time
 
 #Hyperparameters
-lr_mu           = 0.05
-lr_q            = 0.0001
+lr_mu           = 0.001
+lr_q            = 0.0005
 lr_s            = 0.0005
 gamma           = 0.90
-batch_size      = 20
+batch_size      = 32
 buffer_limit    = 2000
-tau             = 0.001 # for target network soft update
-number_of_train = 250
+tau             = 0.01 # for target network soft update
+number_of_train = 10
 
 class ReplayBuffer():
     def __init__(self):
@@ -28,20 +28,21 @@ class ReplayBuffer():
     
     def sample(self, n):
         mini_batch = random.sample(self.buffer, n)
-        s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst = [], [], [], [], []
+        s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst, ego_speed_lst = [], [], [], [], [], []
 
         for transition in mini_batch:
-            s, a, r, s_prime, done = transition
+            s, a, r, s_prime, done, ego_speed = transition
             s_lst.append(s)
             a_lst.append([a])
             r_lst.append([r])
             s_prime_lst.append(s_prime)
             done_mask = 0.0 if done else 1.0 
             done_mask_lst.append([done_mask])
+            ego_speed_lst.append(ego_speed)
         
         return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst, dtype=torch.float), \
                 torch.tensor(r_lst, dtype=torch.float), torch.tensor(s_prime_lst, dtype=torch.float), \
-                torch.tensor(done_mask_lst, dtype=torch.float)
+                torch.tensor(done_mask_lst, dtype=torch.float), torch.tensor(ego_speed_lst, dtype=torch.float)
     
     def size(self):
         return len(self.buffer)
@@ -49,20 +50,22 @@ class ReplayBuffer():
 class MuNet(nn.Module):
     def __init__(self):
         super(MuNet, self).__init__()
-        self.fc1 = nn.Linear(12, 2)
-        # self.fc2 = nn.Linear(128, 64)
-        # self.fc_mu = nn.Linear(64, 2)
-        # self.fc = nn.Linear(12, 2)
-        self.clipping = torch.tensor([1.0, 0.1])
+        self.fc1 = nn.Linear(13, 2)
+        self.bn = torch.nn.BatchNorm1d(2)
+        self.clipping = torch.tensor([0.05, 0.1])
 
     def forward(self, x):
-        mu = F.relu(self.fc1(x))
-        # x = F.relu(self.fc2(x))
-        # mu = self.fc_mu(x)
-        # mu = self.fc(x)
-        # clipping = torch.tensor([0.1, 0.003])
-        # mu = mu * clipping
-        mu = torch.clamp(mu, min = -0.3, max = 0.3)
+        mu = self.fc1(x)
+
+        # mu = self.bn(mu)
+        mu = F.relu(mu) - 1
+        mu = mu * self.clipping
+        return mu
+
+    def getAction(self, x):
+        x = x.reshape(1,13)
+        mu = self.fc1(x)
+        mu = F.relu(mu) - 1
         mu = mu * self.clipping
         return mu
 
@@ -73,7 +76,8 @@ class QNet(nn.Module):
         # self.state_representer = state_representer
         # self.fc_s = nn.Linear(12, 64)
         # self.fc_a = nn.Linear(2,64)
-        self.fc_q = nn.Linear(14, 1)
+        self.fc_q = nn.Linear(15, 1)
+        self.bn = torch.nn.BatchNorm1d(1)
         # self.fc_out = nn.Linear(32,1)
 
     def forward(self, x, a):
@@ -84,18 +88,18 @@ class QNet(nn.Module):
         # print("h1 size", h1.size())
         # print("h2 size", h2.size())
 
-        h1 = x.reshape(batch_size,12)
+        h1 = x.reshape(batch_size,13)
         h2 = a.reshape(batch_size,2)
         # print("h1 size", h1.size())
         # print("h2 size", h2.size())
         cat = torch.cat([h1,h2], dim=1)
-        q = F.relu(self.fc_q(cat))
+        q = self.bn(self.fc_q(cat))
         # q = self.fc_out(q)
         return q
 
 class OrnsteinUhlenbeckNoise:
     def __init__(self, mu):
-        self.theta, self.dt, self.sigma = 0.01, 0.01, 0.01
+        self.theta, self.dt, self.sigma = 0.1, 0.01, 0.1
         self.mu = mu
         self.x_prev = np.zeros_like(self.mu)
 
@@ -125,21 +129,29 @@ class DDPG():
 
         self.q_loss = 0
         self.mu_loss = 0
+
         self.noise_ratio = 1
+        self.noise_decay_ratio = 1 - 1e-4
         
 
     def train(self):
-        s,a,r,s_prime,done_mask  = self.memory.sample(batch_size)
+        s,a,r,s_prime,done_mask,ego_speed  = self.memory.sample(batch_size)
 
         represented_state = self.state_representer(s)
+        represented_state = torch.cat([represented_state.reshape(12,32), torch.tensor(ego_speed, dtype = torch.float).reshape(1,32)]).reshape(32,13)
         represented_state_prime = self.state_representer(s_prime)
+        print("represented_state_prime",represented_state_prime.size())
+        represented_state_prime = torch.cat([represented_state_prime.reshape(12,32), torch.tensor(ego_speed, dtype = torch.float).reshape(1,32)]).reshape(32,13)
+        
+        # a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
         self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())
         # self.q_optimizer.zero_grad()
         # q_loss.backward()
         # self.q_optimizer.step()
         
-        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() # That's all for the policy loss.
+        # self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() # That's all for the policy loss.
+        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10000
         # self.mu_optimizer.zero_grad()
         # mu_loss.backward()
         # self.mu_optimizer.step()
@@ -149,16 +161,28 @@ class DDPG():
         loss = self.q_loss + self.mu_loss
         loss.backward()
         # print("\n")
+        # print("mu", self.mu(represented_state))
+        # print("q",-self.q(represented_state, self.mu(represented_state)))
+        # print("q loss", self.q_loss, "mu loss", self.mu_loss)
+        # print("==================================")
         # print("q")
         # for param in self.q.parameters():
+        #     print(param)
+        #     print("---------------------------------")
         #     print(param.grad)
-        # print("mu")
-        # for param in self.mu.parameters():
-        #     print(param.grad)
+        print("==================================")
+        print("mu")
+        for param in self.mu.parameters():
+            print(param)
+            print("---------------------------------")
+            print(param.grad)
+        print("==================================")
         # print("state")
         # for param in self.state_representer.parameters():
+        #     print(param)
+        #     print("---------------------------------")
         #     print(param.grad)
-
+        print("noise ratio", self.noise_ratio)
         self.q_optimizer.step()
         self.mu_optimizer.step()
         self.state_optimizer.step()
@@ -169,20 +193,23 @@ class DDPG():
         for param_target, param in zip(net_target.parameters(), net.parameters()):
             param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
     
-    def getAction(self, state):
-        a = self.mu(self.state_representer(torch.from_numpy(state).float())) 
+    def getAction(self, state, ego_speed):
+        # print("state",self.state_representer(torch.from_numpy(state).float()).size())
+        # print("ego speed", torch.tensor(ego_speed, dtype = torch.float).reshape(1,1).size())
+        a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         action = []
-        print("action ratio", self.noise_ratio, "accel noise", self.ou_noise_accel()[0], "steer", self.ou_noise_steer()[0])
+        # print("action",a[0][0].item(), a[0][1].item() )
+        # print("action ratio", self.noise_ratio, "accel noise", self.ou_noise_accel()[0], "steer", self.ou_noise_steer()[0])
         
         
         action.append(a[0][0].item() + self.noise_ratio * self.ou_noise_accel()[0])
         action.append(a[0][1].item() + self.noise_ratio * self.ou_noise_steer()[0])
-        self.noise_ratio *= (1 - 1e-3)
+        self.noise_ratio *= self.noise_decay_ratio
 
         return action
     
-    def insertMemory(self, state, action, reward, s_prime, done):
-        self.memory.put((state, action ,reward/10, s_prime, done))
+    def insertMemory(self, state, action, reward, s_prime, done, ego_speed):
+        self.memory.put((state, action ,reward * 100.0, s_prime, done, ego_speed))
     
     def isMemoryFull(self):
         return self.memory.size() >= buffer_limit
