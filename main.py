@@ -18,6 +18,18 @@ from TD3 import TD3
 from DDPG import DDPG
 import torch.nn.functional as F
 import math
+from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
+
+
+import random
+
+random_seed = 42
+torch.manual_seed(random_seed)
+torch.cuda.manual_seed(random_seed)
+torch.cuda.manual_seed_all(random_seed)
+np.random.seed(random_seed)
+random.seed(random_seed)
 
 f = None
 
@@ -55,12 +67,14 @@ def main():
         },
         # "collision_reward": -100,
         "duration": 600,
-        "on_road_reward" : 1,
+        "on_road_reward" : 0,
         # "off_road_reward" : -5,
         'offroad_terminal': True,
-        'high_speed_reward': 0.1,
+        # 'high_speed_reward': 0.001,
         'screen_height': 600,
         'screen_width': 2400,
+        'initial_lane_id': 2,
+        'initial_speed': -1,
         # "observation": {
         #     "type": "Kinematics",
         #     "vehicles_count": num_of_other_vehicles,
@@ -88,7 +102,7 @@ def main():
         # }
         "observation":{
            "type": "GrayscaleObservation",
-           "observation_shape": (128, 64),
+           "observation_shape": (64, 32),
            "stack_size": 1,
            "weights": [0.2989, 0.5870, 0.1140],  # weights for RGB conversion
            "scaling": 1.75}
@@ -107,7 +121,7 @@ def main():
     episode_reward = 0
     max_time_step = 10000
     episode_num = 0
-
+    
     # ego = env.road.vehicles[0].position
     # ego_lane_idx = np.array(env.road.network.get_closest_lane_index(np.array(ego))[2],np.float32)
     state = env.reset()
@@ -116,39 +130,41 @@ def main():
 
         # acceleration and steering angle
         done = False
-        # ego = env.road.vehicles[0].position
-        # ego_heading = env.road.vehicles[0].heading / math.pi
-        # ego_speed = [env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading), env.road.vehicles[0].speed / 3.6 * math.sin(ego_heading)]
-        # ego_lane_idx = np.array(env.road.network.get_closest_lane_index(np.array(ego))[2],np.float32)
-        if use_keyboard:
-            if keyboard_listener.is_space_pressed:
-                print("wait!!")
-            while keyboard_listener.is_space_pressed:
-                pass
+        # print("ego lane idx", ego_lane_idx)
+        # if use_keyboard:
+        #     if keyboard_listener.is_space_pressed:
+        #         print("wait!!")
+        #     while keyboard_listener.is_space_pressed:
+        #         pass
         
         time_step = 0
         while time_step < max_time_step and not done:
             action = policy.getAction(state)
-            print("")
-            print("episode num", episode_num)
-            print("time step", time_step)
-            print("memory size", policy.getMemorySize())
-            print("action", action)
             s_prime, reward, done, info = env.step(action)
+            ego = env.road.vehicles[0].position
+            ego_heading = env.road.vehicles[0].heading / math.pi
+            ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
+            reward = ego_speed * 0.05
             policy.insertMemory(state, action, reward, s_prime, done)
             episode_reward += reward
             state = s_prime
             time_step +=1
             env.render()
+        writer.add_scalar("Q Loss/episode", policy.getQLoss(), episode_num)
+        writer.add_scalar("Mu Loss/episode", policy.getMuLoss(), episode_num)
+        writer.add_scalar("episode reward/episode", episode_reward, episode_num)
+
         
         if policy.isMemoryFull():
             policy.startTraining()
+        print("episode num", episode_num)
         print("total reward", episode_reward)
         print("getParams", policy.getParams())
 
-        if done or keyboard_listener.reset_flag:
+        # if done or keyboard_listener.reset_flag:
+        if done:
             obs = env.reset()
-            keyboard_listener.reset_flag = False
+            # keyboard_listener.reset_flag = False
             # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
 			# Reset environment 
             state, done = env.reset(), False
@@ -161,9 +177,14 @@ def main():
 
     # evt.clear()
 if __name__ == '__main__':
-    evt = threading.Event()
-    keyboard_listener = KeyboardEventHandler(evt)
+    # evt = threading.Event()
+    # keyboard_listener = KeyboardEventHandler(evt)
+    now = datetime.now()
+    logdir = 'logs/' + now.strftime("%Y%m%d-%H%M%S")
+    writer = SummaryWriter(logdir)
     main()
+    writer.flush()
+    writer.close()
     if f:
         f.close()
 
