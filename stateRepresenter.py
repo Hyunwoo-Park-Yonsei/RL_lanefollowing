@@ -11,7 +11,7 @@ class StateRepresenter(nn.Module):
     # self.conv3 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=(1, 1))
     # self.conv4 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=(1, 1))
     self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
-    self.fc1 = nn.Linear(128, 12)
+    self.fc1 = nn.Linear(512, 12)
     self.ELU = torch.nn.ELU()
   
   def forward(self, x):

@@ -23,7 +23,7 @@ from datetime import datetime
 
 import random
 
-random_seed = 42
+random_seed = 21
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
@@ -36,7 +36,7 @@ time_steps = 2500
 max_action = 0.3
 expl_noise = 0.1
 batch_size = 256
-teraminal_penalty = -100
+teraminal_penalty = -10
 
 lat_P = 1
 lat_I = 0.15
@@ -48,6 +48,18 @@ PID_target_time = 0.3
 use_keyboard = False
 
 max_iteration = int(1e6)
+def clip(action):
+    clip_action = [0,0]
+    max_clip = 0.2
+    for i in range(len(action)):
+        if action[i] > max_clip:
+            clip_action[i] = max_clip
+        elif action[i] < -max_clip:
+            clip_action[i] = -max_clip
+        else:
+            clip_action[i] = action[i]
+    return clip_action
+
 def main():
     global f
 
@@ -55,7 +67,7 @@ def main():
     num_of_other_vehicles = 0
     num_of_lanes = 5
     env = gym.make('racetrack-v0')
-    # env = gym.make('highway-v1')
+    # env = gym.make('highway-v0')
     # env.config["show_trajectories"] = True
     env.config["vehicles_count"] = num_of_other_vehicles
     env.config["simulation_frequency"] = 10
@@ -78,7 +90,7 @@ def main():
         'other_vehicles': 0,
         "observation":{
            "type": "GrayscaleObservation",
-           "observation_shape": (64, 32),
+           "observation_shape": (128, 64),
            "stack_size": 1,
            "weights": [0.2989, 0.5870, 0.1140],  # weights for RGB conversion
            "scaling": 1.75}
@@ -119,16 +131,21 @@ def main():
             ego_heading = env.road.vehicles[0].heading / math.pi
             ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
             action = policy.getAction(state, ego_speed)
-            s_prime, reward, done, info = env.step(action)
+            # print(action)
+            clipped_action = clip(action)
+            s_prime, reward, done, info = env.step(clipped_action)
             
             reward = ego_speed * 0.05
+            if done:
+                # print("done!!!!!!!!!!!!!")
+                reward += teraminal_penalty
             policy.insertMemory(state, action, reward, s_prime, done, ego_speed)
             episode_reward += reward
             state = s_prime
 
             # fig, axes = plt.subplots(ncols=4, figsize=(12, 5))
             # fig_state = state
-            # fig_state = fig_state.reshape(64,32)
+            # fig_state = fig_state.reshape(128,64)
             # # print("fig size", np.shape(fig_state))
             # for i, ax in enumerate(axes.flat):
             #     ax.imshow(fig_state, cmap=plt.get_cmap('gray'))
