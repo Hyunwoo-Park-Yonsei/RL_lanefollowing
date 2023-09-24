@@ -32,19 +32,7 @@ random.seed(random_seed)
 
 f = None
 
-time_steps = 2500
-max_action = 0.3
-expl_noise = 0.1
-batch_size = 256
-teraminal_penalty = -10
 
-lat_P = 1
-lat_I = 0.15
-lat_D = 0
-long_P = 1.0
-long_I = 1.0
-long_D = 1.0
-PID_target_time = 0.3
 use_keyboard = True
 
 max_iteration = int(1e6)
@@ -61,39 +49,46 @@ def clip(action):
     return clip_action
 
 def main():
-    env = gym.make('Pendulum-v1', max_episode_steps=200, autoreset=True, render_mode="rgb_array")
+    env = gym.make('Pendulum-v1', max_episode_steps=200, autoreset=True)
     policy = DDPG()
-
+    episode_num = 0
+    max_time_step = 200
+    print_interval = 20
+    score = 0
+    countt = 0 
     for n_epi in range(10000):
         state, _ = env.reset()
         done = False
         episode_reward = 0
-        max_time_step = 200
-        episode_num = 0
         time_step = 0
 
         while time_step < max_time_step and not done:
             action = policy.getAction(state)
-            s_prime, reward, done, truncated, info = env.step(action)
-            policy.insertMemory(state, action, reward / 100.0, s_prime, done, ego_speed = 0)
+            # print("action",action)
+            s_prime, reward, done, truncated, info = env.step([action.item()])
+            policy.insertMemory(state, action, reward / 100.0, s_prime, done)
             episode_reward += reward
+            score += reward
             s = s_prime
             time_step+=1
             # env.render()
         episode_num +=1
-        writer.add_scalar("Q Loss/episode", policy.getQLoss(), episode_num)
-        writer.add_scalar("Mu Loss/episode", policy.getMuLoss(), episode_num)
+        # writer.add_scalar("Q Loss/episode", policy.getQLoss(), episode_num)
+        # writer.add_scalar("Mu Loss/episode", policy.getMuLoss(), episode_num)
         writer.add_scalar("episode reward/episode", episode_reward, episode_num)
-
-        if policy.isMemoryFull():
-            print("Memory size", policy.getMemorySize())
+        
+        if policy.getMemorySize() > 2000:
+            # print("Memory size", policy.getMemorySize())
             policy.startTraining()
-        else:
-            print("Memory size", policy.getMemorySize())
-        print("episode num", episode_num)
-        print("total reward", episode_reward)
-        print("q_loss", policy.getQLoss(), "mu_loss", policy.getMuLoss())
+            countt +=1
+            # if countt > 1:
+                # exit()
 
+        # else:
+        #     # print("Memory size", policy.getMemorySize())
+        if n_epi%print_interval==0 and n_epi!=0:
+            print("# of episode :{}, avg score : {:.1f}".format(n_epi, score/print_interval))
+            score = 0.0
 # def main():
 #     global f
 
