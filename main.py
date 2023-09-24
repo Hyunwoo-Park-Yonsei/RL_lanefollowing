@@ -23,7 +23,7 @@ from datetime import datetime
 
 import random
 
-random_seed = 21
+random_seed = 42
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
@@ -45,12 +45,12 @@ long_P = 1.0
 long_I = 1.0
 long_D = 1.0
 PID_target_time = 0.3
-use_keyboard = False
+use_keyboard = True
 
 max_iteration = int(1e6)
 def clip(action):
     clip_action = [0,0]
-    max_clip = 0.2
+    max_clip = 0.1
     for i in range(len(action)):
         if action[i] > max_clip:
             clip_action[i] = max_clip
@@ -109,6 +109,7 @@ def main():
     episode_reward = 0
     max_time_step = 10000
     episode_num = 0
+    max_speed = 0.3
     
     # ego = env.road.vehicles[0].position
     # ego_lane_idx = np.array(env.road.network.get_closest_lane_index(np.array(ego))[2],np.float32)
@@ -126,31 +127,68 @@ def main():
         #         pass
         
         time_step = 0
+        if keyboard_listener.isTrainingMode():
+            print("Training mode")
+        else:
+            print("Evaluation mode")
+        
+        is_train_mode = True
+        if use_keyboard and keyboard_listener.isTrainingMode():
+            is_train_mode = True
+        else:
+            is_train_mode = False
         while time_step < max_time_step and not done:
-            ego = env.road.vehicles[0].position
-            ego_heading = env.road.vehicles[0].heading / math.pi
-            ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
-            action = policy.getAction(state, ego_speed)
-            # print(action)
-            clipped_action = clip(action)
-            s_prime, reward, done, info = env.step(clipped_action)
-            
-            reward = ego_speed * 0.05
-            if done:
-                # print("done!!!!!!!!!!!!!")
-                reward += teraminal_penalty
-            policy.insertMemory(state, action, reward, s_prime, done, ego_speed)
-            episode_reward += reward
-            state = s_prime
+            if use_keyboard and keyboard_listener.is_space_pressed:
+                print("wait!!")
+            while keyboard_listener.is_space_pressed:
+                pass
 
-            # fig, axes = plt.subplots(ncols=4, figsize=(12, 5))
-            # fig_state = state
-            # fig_state = fig_state.reshape(128,64)
-            # # print("fig size", np.shape(fig_state))
-            # for i, ax in enumerate(axes.flat):
-            #     ax.imshow(fig_state, cmap=plt.get_cmap('gray'))
-            # plt.show()
+            if is_train_mode:
+                ego = env.road.vehicles[0].position
+                ego_heading = env.road.vehicles[0].heading / math.pi
+                ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
+                action = policy.getAction(state, ego_speed)
+                # print(action)
+                clipped_action = clip(action)
+                
+                if abs(ego_speed) > max_speed:
+                    # print(ego_speed,action)
+                    clipped_action[0] = 0
+                s_prime, reward, done, info = env.step(clipped_action)
+                
+                reward = ego_speed * 0.05
+                if done:
+                    # print("done!!!!!!!!!!!!!")
+                    reward += teraminal_penalty
+                policy.insertMemory(state, action, reward, s_prime, done, ego_speed)
+                episode_reward += reward
+                state = s_prime
 
+                # fig, axes = plt.subplots(ncols=4, figsize=(12, 5))
+                # fig_state = state
+                # fig_state = fig_state.reshape(128,64)
+                # # print("fig size", np.shape(fig_state))
+                # for i, ax in enumerate(axes.flat):
+                #     ax.imshow(fig_state, cmap=plt.get_cmap('gray'))
+                # plt.show()
+            else:
+                ego = env.road.vehicles[0].position
+                ego_heading = env.road.vehicles[0].heading / math.pi
+                ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
+                action = policy.getEvaluationAction(state, ego_speed)
+                # print(action)
+                clipped_action = clip(action)
+                
+                if abs(ego_speed) > max_speed:
+                    # print(ego_speed,action)
+                    clipped_action[0] = 0
+                s_prime, reward, done, info = env.step(clipped_action)
+                
+                reward = ego_speed * 0.05
+                if done:
+                    reward += teraminal_penalty
+                episode_reward += reward
+                state = s_prime
 
             time_step +=1
             env.render()
@@ -159,8 +197,11 @@ def main():
         writer.add_scalar("episode reward/episode", episode_reward, episode_num)
 
         
-        if policy.isMemoryFull():
+        if is_train_mode and policy.isMemoryFull():
+            print("Memory size", policy.getMemorySize())
             policy.startTraining()
+        else:
+            print("Memory size", policy.getMemorySize())
         print("episode num", episode_num)
         print("total reward", episode_reward)
         print("q_loss", policy.getQLoss(), "mu_loss", policy.getMuLoss())
@@ -182,8 +223,9 @@ def main():
 
     # evt.clear()
 if __name__ == '__main__':
-    # evt = threading.Event()
-    # keyboard_listener = KeyboardEventHandler(evt)
+    evt = threading.Event()
+    keyboard_listener = KeyboardEventHandler(evt)
+
     now = datetime.now()
     logdir = 'logs/' + now.strftime("%Y%m%d-%H%M%S")
     writer = SummaryWriter(logdir)

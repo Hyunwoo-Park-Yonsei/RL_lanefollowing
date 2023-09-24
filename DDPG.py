@@ -11,12 +11,12 @@ from torchsummary import summary
 import time
 
 #Hyperparameters
-lr_mu           = 0.001
-lr_q            = 0.001
-lr_s            = 0.001
+lr_mu           = 0.0005
+lr_q            = 0.0005
+lr_s            = 0.0001
 gamma           = 0.90
 batch_size      = 32
-buffer_limit    = 200000
+buffer_limit    = 30000
 tau             = 0.01 # for target network soft update
 number_of_train = 30
 
@@ -65,22 +65,46 @@ class MuNet(nn.Module):
 
     def newActFunc2(self, x):
         a = torch.exp(x - 1)
-        b = -torch.exp(x + 1)
+        b = -torch.exp(-x + 1)
         out_of_range = torch.where(torch.abs(a) > torch.abs(b), a, b)
         return torch.where(1 < torch.abs(out_of_range), x, out_of_range)
-        # if x > 1:
-        #     return torch.exp(x - 1)
-        # elif x < -1:
-        #     return -torch.exp(x + 1)
-        # else:
-        #     return x
+
+    def newActFunc3(self, x):
+        grad = 3
+        a = grad * torch.exp(x - 1)
+        b = -grad * torch.exp(-x + 1)
+        out_of_range = torch.where(torch.abs(a) > torch.abs(b), a, b)
+        return torch.where(grad < torch.abs(out_of_range), x, out_of_range)
+    
+    def newActFunc4(self, x):
+        grad = 10e-5
+        clip = 0.2
+        # grad = 1
+        # clip = 1
+        a = grad * torch.exp(x - clip) + grad * (clip - 1)
+        b = -grad * torch.exp(-x - clip) - grad * (clip - 1)
+        out_of_range = torch.where(x > 0, a, b)
+        return torch.where(abs(x) < clip, grad * x, out_of_range)
+
+    def newActFunc5(self, x):
+        # grad1 = 2 * 10e-3
+        # grad2 = 1 * 10e-4
+        grad1 = 1.5 * 10e-3
+        grad2 = 8 * 10e-4
+        clip = 0.2
+        # higher grad out side of the clip
+        return torch.where(torch.abs(x) < clip / grad2, grad2 * x, grad1 * x - clip * (grad1 / grad2 - 1))
+        # lower grad out side of the clip
+        # return torch.where(torch.abs(x) < clip / grad1, grad1 * x, grad2 * x - clip * (grad2 / grad1 - 1))
 
     def forward(self, x):
         mu = self.fc1(x)
         mu = self.bn(mu)
         # mu = F.relu(mu) - 1
         # mu = self.newActFunc(mu)
-        mu = self.newActFunc2(mu)
+        mu = self.newActFunc5(mu)
+        # mu = mu * 10e-4
+        # mu = self.newActFunc3(mu)
         # mu = torch.tanh(mu)
         # mu = torch.clamp(mu,-1,1)
         # mu = mu * self.clipping
@@ -92,7 +116,9 @@ class MuNet(nn.Module):
         mu = self.fc1(x)
         # mu = F.relu(mu) - 1
         # mu = self.newActFunc(mu)
-        mu = self.newActFunc2(mu)
+        mu = self.newActFunc5(mu)
+        # mu = mu * 10e-4
+        # mu = self.newActFunc3(mu)
         # mu = torch.tanh(mu)
         # mu = torch.clamp(mu,-1,1)
         # mu = mu * self.clipping
@@ -160,8 +186,8 @@ class DDPG():
         self.mu_loss = 0
 
         self.noise_ratio = 0.3
-        self.noise_decay_ratio = 1 - 1e-5
-        self.noise_ths = 0.03
+        self.noise_decay_ratio = 1 - 3 * 10e-4
+        self.noise_ths = 0.02
         
 
     def train(self):
@@ -175,13 +201,13 @@ class DDPG():
         
         # a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
-        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())* 10e-4
+        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())* 10e-2
         # self.q_optimizer.zero_grad()
         # q_loss.backward()
         # self.q_optimizer.step()
         
         # self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() # That's all for the policy loss.
-        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-1#* 10e9
+        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-2 #* 10e9
         # self.mu_optimizer.zero_grad()
         # mu_loss.backward()
         # self.mu_optimizer.step()
@@ -224,32 +250,43 @@ class DDPG():
             param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
     
     def getAction(self, state, ego_speed):
-        # print("state",self.state_representer(torch.from_numpy(state).float()).size())
-        # print("ego speed", torch.tensor(ego_speed, dtype = torch.float).reshape(1,1).size())
+        if not self.isMemoryFull():
+            # print(self.ou_noise_accel()[0],self.ou_noise_steer()[0])
+            return [self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0]]
         a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         action = []
-        # print("action",a[0][0].item(), a[0][1].item() )
-        # print("action ratio", self.noise_ratio, "accel noise", self.ou_noise_accel()[0], "steer", self.ou_noise_steer()[0])
-        
+        print("action",a[0][0].item(), a[0][1].item(), self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0])
         
         action.append(a[0][0].item() + self.noise_ratio * self.ou_noise_accel()[0])
         action.append(a[0][1].item() + self.noise_ratio * self.ou_noise_steer()[0])
-        if(self.noise_ratio > self.noise_ths):
-            self.noise_ratio *= self.noise_decay_ratio
+
+        return action
+    
+    def getEvaluationAction(self, state, ego_speed):
+        a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
+        action = []
+        print("action",a[0][0].item(), a[0][1].item())
+        
+        action.append(a[0][0].item())
+        action.append(a[0][1].item())
+
         return action
     
     def insertMemory(self, state, action, reward, s_prime, done, ego_speed):
-        self.memory.put((state, action ,reward / 10e-3, s_prime, done, ego_speed))
+        self.memory.put((state, action ,reward / 10e-1, s_prime, done, ego_speed))
     
     def isMemoryFull(self):
         return self.memory.size() >= buffer_limit
     
     def startTraining(self):
         print("Start Training !")
+        print("action ratio", self.noise_ratio, "accel noise", self.ou_noise_accel()[0], "steer", self.ou_noise_steer()[0])
         for i in range(number_of_train):
             self.train()
             self.soft_update(self.mu, self.mu_target)
             self.soft_update(self.q, self.q_target)
+        if(self.noise_ratio > self.noise_ths):
+            self.noise_ratio *= self.noise_decay_ratio
 
     def getMemorySize(self):
         return self.memory.size() 

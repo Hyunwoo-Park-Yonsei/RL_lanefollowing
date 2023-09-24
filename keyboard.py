@@ -8,12 +8,18 @@ class KeyboardEventHandler:
         self.is_space_pressed = False
         self.evt = _evt
         self.reset_flag = False
-        self.activate = True
+        self.activate = False
+
+        self.training = True
 
     def isPressed(self,key):
         
         if key == keyboard.Key.esc:
             self.activate = not self.activate
+            if self.activate:
+                print("Keyboard input Activated")
+            else:
+                print("Keyboard input Inactivated")
             
         if self.activate:
             if key == keyboard.Key.space:
@@ -23,10 +29,15 @@ class KeyboardEventHandler:
                 else:
                     self.is_space_pressed = True
                     print("STOP")
-
-                
+            
+            if key == keyboard.KeyCode(char='t'):
+                self.training = not self.training
+           
             if key == keyboard.KeyCode(char='r'):
                 self.reset_flag = True
+    
+    def isTrainingMode(self):
+        return self.training
                 
                 
 
