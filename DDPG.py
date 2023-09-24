@@ -11,14 +11,14 @@ from torchsummary import summary
 import time
 
 #Hyperparameters
-lr_mu           = 0.0005
-lr_q            = 0.0005
-lr_s            = 0.0001
-gamma           = 0.90
-batch_size      = 32
-buffer_limit    = 30000
-tau             = 0.01 # for target network soft update
-number_of_train = 30
+lr_mu        = 0.0005
+lr_q         = 0.001
+lr_s         = 0.001
+gamma        = 0.9
+batch_size   = 32
+buffer_limit = 50000
+tau          = 0.005 # for target network soft update
+number_of_train = 10
 
 class ReplayBuffer():
     def __init__(self):
@@ -51,8 +51,8 @@ class ReplayBuffer():
 class MuNet(nn.Module):
     def __init__(self):
         super(MuNet, self).__init__()
-        self.fc1 = nn.Linear(13, 2)
-        self.bn = torch.nn.BatchNorm1d(2)
+        self.fc1 = nn.Linear(3, 1)
+        self.bn = torch.nn.BatchNorm1d(1)
         self.clipping = torch.tensor([0.2, 0.2])
     
     def newActFunc(self, x):
@@ -111,8 +111,7 @@ class MuNet(nn.Module):
         return mu
 
     def getAction(self, x):
-        x = x.reshape(1,13)
-
+        x = x.reshape(1,3)
         mu = self.fc1(x)
         # mu = F.relu(mu) - 1
         # mu = self.newActFunc(mu)
@@ -131,7 +130,7 @@ class QNet(nn.Module):
         # self.state_representer = state_representer
         # self.fc_s = nn.Linear(12, 64)
         # self.fc_a = nn.Linear(2,64)
-        self.fc_q = nn.Linear(15, 1)
+        self.fc_q = nn.Linear(4, 1)
         self.bn = torch.nn.BatchNorm1d(1)
         # self.fc_out = nn.Linear(32,1)
 
@@ -143,8 +142,8 @@ class QNet(nn.Module):
         # print("h1 size", h1.size())
         # print("h2 size", h2.size())
 
-        h1 = x.reshape(batch_size,13)
-        h2 = a.reshape(batch_size,2)
+        h1 = x.reshape(batch_size,3)
+        h2 = a.reshape(batch_size,1)
         # print("h1 size", h1.size())
         # print("h2 size", h2.size())
         cat = torch.cat([h1,h2], dim=1)
@@ -191,23 +190,17 @@ class DDPG():
         
 
     def train(self):
-        s,a,r,s_prime,done_mask,ego_speed  = self.memory.sample(batch_size)
+        s,a,r,s_prime,done_mask, ego_speed  = self.memory.sample(batch_size)
 
-        represented_state = self.state_representer(s)
-        represented_state = torch.cat([represented_state.reshape(12,32), torch.tensor(ego_speed, dtype = torch.float).reshape(1,32)]).reshape(32,13)
-        represented_state_prime = self.state_representer(s_prime)
-        # print("represented_state_prime",represented_state_prime.size())
-        represented_state_prime = torch.cat([represented_state_prime.reshape(12,32), torch.tensor(ego_speed, dtype = torch.float).reshape(1,32)]).reshape(32,13)
-        
         # a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
-        target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
-        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())* 10e-2
+        target = r + gamma * self.q_target(s_prime, self.mu_target(s_prime)) * done_mask
+        self.q_loss = F.smooth_l1_loss(self.q(s,a), target.detach())
         # self.q_optimizer.zero_grad()
         # q_loss.backward()
         # self.q_optimizer.step()
         
         # self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() # That's all for the policy loss.
-        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-2 #* 10e9
+        self.mu_loss = -self.q(s, self.mu(s)).mean()#* 10e9
         # self.mu_optimizer.zero_grad()
         # mu_loss.backward()
         # self.mu_optimizer.step()
@@ -249,30 +242,28 @@ class DDPG():
         for param_target, param in zip(net_target.parameters(), net.parameters()):
             param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
     
-    def getAction(self, state, ego_speed):
+    def getAction(self, state, ego_speed = 0):
         if not self.isMemoryFull():
             # print(self.ou_noise_accel()[0],self.ou_noise_steer()[0])
-            return [self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0]]
-        a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
+            return [self.ou_noise_accel()[0]]
+        a = self.mu.getAction(torch.from_numpy(state))
         action = []
-        print("action",a[0][0].item(), a[0][1].item(), self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0])
+        # print("action",a[0][0].item(), a[0][1].item(), self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0])
         
-        action.append(a[0][0].item() + self.noise_ratio * self.ou_noise_accel()[0])
-        action.append(a[0][1].item() + self.noise_ratio * self.ou_noise_steer()[0])
+        action.append(a[0][0].item() + self.ou_noise_accel()[0])
 
         return action
     
     def getEvaluationAction(self, state, ego_speed):
-        a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
+        a = self.mu.getAction(torch.from_numpy(state))
         action = []
-        print("action",a[0][0].item(), a[0][1].item())
+        # print("action",a[0][0].item(), a[0][1].item())
         
         action.append(a[0][0].item())
-        action.append(a[0][1].item())
 
         return action
     
-    def insertMemory(self, state, action, reward, s_prime, done, ego_speed):
+    def insertMemory(self, state, action, reward, s_prime, done, ego_speed = 0):
         self.memory.put((state, action ,reward / 10e-1, s_prime, done, ego_speed))
     
     def isMemoryFull(self):
