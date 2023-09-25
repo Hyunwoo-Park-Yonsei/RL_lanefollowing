@@ -66,8 +66,8 @@ def main():
     generate_data = False
     num_of_other_vehicles = 0
     num_of_lanes = 5
-    env = gym.make('racetrack-v0')
-    # env = gym.make('highway-v0')
+    # env = gym.make('racetrack-v0')
+    env = gym.make('highway-v0')
     # env.config["show_trajectories"] = True
     env.config["vehicles_count"] = num_of_other_vehicles
     env.config["simulation_frequency"] = 10
@@ -191,7 +191,7 @@ def main():
                 state = s_prime
 
             time_step +=1
-            env.render()
+            env.render(mode = 'rgb_array')
         writer.add_scalar("Q Loss/episode", policy.getQLoss(), episode_num)
         writer.add_scalar("Mu Loss/episode", policy.getMuLoss(), episode_num)
         writer.add_scalar("episode reward/episode", episode_reward, episode_num)

@@ -16,7 +16,7 @@ lr_q            = 0.0005
 lr_s            = 0.0001
 gamma           = 0.90
 batch_size      = 32
-buffer_limit    = 30000
+buffer_limit    = 6000
 tau             = 0.01 # for target network soft update
 number_of_train = 30
 
@@ -186,7 +186,7 @@ class DDPG():
         self.mu_loss = 0
 
         self.noise_ratio = 0.3
-        self.noise_decay_ratio = 1 - 3 * 10e-4
+        self.noise_decay_ratio = 1 - 3 * 10e-2
         self.noise_ths = 0.02
         
 
@@ -198,50 +198,30 @@ class DDPG():
         represented_state_prime = self.state_representer(s_prime)
         # print("represented_state_prime",represented_state_prime.size())
         represented_state_prime = torch.cat([represented_state_prime.reshape(12,32), torch.tensor(ego_speed, dtype = torch.float).reshape(1,32)]).reshape(32,13)
-        
+        # represented_state = represented_state.detach().clone()
         # a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
-        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())* 10e-2
-        # self.q_optimizer.zero_grad()
-        # q_loss.backward()
-        # self.q_optimizer.step()
-        
-        # self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() # That's all for the policy loss.
-        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-2 #* 10e9
-        # self.mu_optimizer.zero_grad()
-        # mu_loss.backward()
-        # self.mu_optimizer.step()
+        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())
         self.q_optimizer.zero_grad()
+        self.state_optimizer.zero_grad()
+        self.q_loss.backward()
+        self.state_optimizer.step()
+        self.q_optimizer.step()
+
+
+        represented_state = self.state_representer(s)
+        represented_state = torch.cat([represented_state.reshape(12,32), torch.tensor(ego_speed, dtype = torch.float).reshape(1,32)]).reshape(32,13)
+        represented_state_prime = self.state_representer(s_prime)
+        # print("represented_state_prime",represented_state_prime.size())
+        represented_state_prime = torch.cat([represented_state_prime.reshape(12,32), torch.tensor(ego_speed, dtype = torch.float).reshape(1,32)]).reshape(32,13)
+
         self.mu_optimizer.zero_grad()
         self.state_optimizer.zero_grad()
-        loss = self.q_loss + self.mu_loss
-        loss.backward()
-        # print("\n")
-        # print("mu", self.mu(represented_state))
-        # print("q",-self.q(represented_state, self.mu(represented_state)))
-        # print("q loss", self.q_loss, "mu loss", self.mu_loss)
-        # print("==================================")
-        # print("q")
-        # for param in self.q.parameters():
-        #     print(param)
-        #     print("---------------------------------")
-        #     print(param.grad)
-        # print("==================================")
-        # print("mu")
-        # for param in self.mu.parameters():
-        #     print(param)
-        #     print("---------------------------------")
-        #     print(param.grad)
-        # print("==================================")
-        # # print("state")
-        # # for param in self.state_representer.parameters():
-        # #     print(param)
-        # #     print("---------------------------------")
-        # #     print(param.grad)
-        # print("noise ratio", self.noise_ratio)
-        self.q_optimizer.step()
-        self.mu_optimizer.step()
+        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() # That's all for the policy loss.
+
+        self.mu_loss.backward()
         self.state_optimizer.step()
+        self.mu_optimizer.step()
         
 
         
