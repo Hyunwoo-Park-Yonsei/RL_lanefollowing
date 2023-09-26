@@ -16,7 +16,7 @@ lr_q            = 0.0005
 lr_s            = 0.0001
 gamma           = 0.90
 batch_size      = 32
-buffer_limit    = 6000
+buffer_limit    = 200000
 tau             = 0.01 # for target network soft update
 number_of_train = 30
 
@@ -89,8 +89,8 @@ class MuNet(nn.Module):
     def newActFunc5(self, x):
         # grad1 = 2 * 10e-3
         # grad2 = 1 * 10e-4
-        grad1 = 1.5 * 10e-3
-        grad2 = 8 * 10e-4
+        grad1 = 4.5 * 10e-3
+        grad2 = 3 * 10e-3
         clip = 0.2
         # higher grad out side of the clip
         return torch.where(torch.abs(x) < clip / grad2, grad2 * x, grad1 * x - clip * (grad1 / grad2 - 1))
@@ -186,7 +186,8 @@ class DDPG():
         self.mu_loss = 0
 
         self.noise_ratio = 0.3
-        self.noise_decay_ratio = 1 - 3 * 10e-2
+        # self.noise_decay_ratio = 1 - 3 * 10e-4
+        self.noise_decay_ratio = 1
         self.noise_ths = 0.02
         
 
@@ -230,7 +231,7 @@ class DDPG():
             param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
     
     def getAction(self, state, ego_speed):
-        if not self.isMemoryFull():
+        if self.isReadyForTraining:
             # print(self.ou_noise_accel()[0],self.ou_noise_steer()[0])
             return [self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0]]
         a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
@@ -257,6 +258,9 @@ class DDPG():
     
     def isMemoryFull(self):
         return self.memory.size() >= buffer_limit
+    
+    def isReadyForTraining(self):
+        return self.memory.size() >= buffer_limit / 100
     
     def startTraining(self):
         print("Start Training !")

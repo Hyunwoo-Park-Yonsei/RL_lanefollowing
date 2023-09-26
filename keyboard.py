@@ -13,7 +13,7 @@ class KeyboardEventHandler:
         self.training = True
 
     def isPressed(self,key):
-        
+
         if key == keyboard.Key.esc:
             self.activate = not self.activate
             if self.activate:
@@ -32,9 +32,10 @@ class KeyboardEventHandler:
             
             if key == keyboard.KeyCode(char='t'):
                 self.training = not self.training
-           
+        
             if key == keyboard.KeyCode(char='r'):
                 self.reset_flag = True
+
     
     def isTrainingMode(self):
         return self.training

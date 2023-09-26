@@ -66,8 +66,8 @@ def main():
     generate_data = False
     num_of_other_vehicles = 0
     num_of_lanes = 5
-    # env = gym.make('racetrack-v0')
-    env = gym.make('highway-v0')
+    env = gym.make('racetrack-v0')
+    # env = gym.make('highway-v0')
     # env.config["show_trajectories"] = True
     env.config["vehicles_count"] = num_of_other_vehicles
     env.config["simulation_frequency"] = 10
@@ -109,7 +109,7 @@ def main():
     episode_reward = 0
     max_time_step = 10000
     episode_num = 0
-    max_speed = 0.3
+    max_speed = 0.6
     
     # ego = env.road.vehicles[0].position
     # ego_lane_idx = np.array(env.road.network.get_closest_lane_index(np.array(ego))[2],np.float32)
@@ -197,7 +197,7 @@ def main():
         writer.add_scalar("episode reward/episode", episode_reward, episode_num)
 
         
-        if is_train_mode and policy.isMemoryFull():
+        if is_train_mode and policy.isReadyForTraining():
             print("Memory size", policy.getMemorySize())
             policy.startTraining()
         else:
