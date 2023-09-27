@@ -66,36 +66,37 @@ def main():
     generate_data = False
     num_of_other_vehicles = 0
     num_of_lanes = 5
-    env = gym.make('racetrack-v0')
+    # env = gym.make('racetrack-v0')
     # env = gym.make('highway-v0')
+    env = gym.make('Pendulum-v1', max_episode_steps=200, autoreset=True)
     # env.config["show_trajectories"] = True
-    env.config["vehicles_count"] = num_of_other_vehicles
-    env.config["simulation_frequency"] = 10
-    env.config["policy_frequency"] = 10
-    env.configure({
-        "lanes_count": num_of_lanes,
-        "action": {
-            "type" : "ContinuousAction"
-        },
-        # "collision_reward": -100,
-        "duration": 600,
-        "on_road_reward" : 0,
-        # "off_road_reward" : -5,
-        'offroad_terminal': True,
-        # 'high_speed_reward': 0.001,
-        'screen_height': 600,
-        'screen_width': 600,
-        'initial_lane_id': 2,
-        'initial_speed': -1,
-        'other_vehicles': 0,
-        "observation":{
-           "type": "GrayscaleObservation",
-           "observation_shape": (128, 64),
-           "stack_size": 1,
-           "weights": [0.2989, 0.5870, 0.1140],  # weights for RGB conversion
-           "scaling": 1.75}
+    # env.config["vehicles_count"] = num_of_other_vehicles
+    # env.config["simulation_frequency"] = 10
+    # env.config["policy_frequency"] = 10
+    # env.configure({
+    #     "lanes_count": num_of_lanes,
+    #     "action": {
+    #         "type" : "ContinuousAction"
+    #     },
+    #     # "collision_reward": -100,
+    #     "duration": 600,
+    #     "on_road_reward" : 0,
+    #     # "off_road_reward" : -5,
+    #     'offroad_terminal': True,
+    #     # 'high_speed_reward': 0.001,
+    #     'screen_height': 600,
+    #     'screen_width': 600,
+    #     'initial_lane_id': 2,
+    #     'initial_speed': -1,
+    #     'other_vehicles': 0,
+    #     "observation":{
+    #        "type": "GrayscaleObservation",
+    #        "observation_shape": (128, 64),
+    #        "stack_size": 1,
+    #        "weights": [0.2989, 0.5870, 0.1140],  # weights for RGB conversion
+    #        "scaling": 1.75}
         
-    })
+    # })
     if generate_data:
         dir = '/Users/hwpark/Desktop/highway_env/data/'
         date_time = datetime.now()
@@ -104,10 +105,10 @@ def main():
 
     obs = None
     
-    policy = DDPG()
+    policy = TD3(3,1,1)
 
     episode_reward = 0
-    max_time_step = 10000
+    max_time_step = 200
     episode_num = 0
     max_speed = 0.6
     
@@ -147,20 +148,23 @@ def main():
                 ego = env.road.vehicles[0].position
                 ego_heading = env.road.vehicles[0].heading / math.pi
                 ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
-                action = policy.getAction(state, ego_speed)
-                # print(action)
-                clipped_action = clip(action)
+                action = policy.select_action(state)
+                if not policy.isReadyForTraining():
+                    action = env.action_space.sample()
                 
-                if abs(ego_speed) > max_speed:
-                    # print(ego_speed,action)
-                    clipped_action[0] = 0
-                s_prime, reward, done, info = env.step(clipped_action)
+                # print(action)
+                # clipped_action = clip(action)
+                
+                # if abs(ego_speed) > max_speed:
+                #     # print(ego_speed,action)
+                #     clipped_action[0] = 0
+                s_prime, reward, done, info = env.step(action)
                 
                 reward = ego_speed * 0.05
                 if done:
                     # print("done!!!!!!!!!!!!!")
                     reward += teraminal_penalty
-                policy.insertMemory(state, action, reward, s_prime, done, ego_speed)
+                policy.insertMemory(state, action, reward, s_prime, done)
                 episode_reward += reward
                 state = s_prime
 
@@ -175,14 +179,14 @@ def main():
                 ego = env.road.vehicles[0].position
                 ego_heading = env.road.vehicles[0].heading / math.pi
                 ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
-                action = policy.getEvaluationAction(state, ego_speed)
+                action = policy.select_action(state)
                 # print(action)
-                clipped_action = clip(action)
+                # clipped_action = clip(action)
                 
-                if abs(ego_speed) > max_speed:
-                    # print(ego_speed,action)
-                    clipped_action[0] = 0
-                s_prime, reward, done, info = env.step(clipped_action)
+                # if abs(ego_speed) > max_speed:
+                #     # print(ego_speed,action)
+                #     clipped_action[0] = 0
+                s_prime, reward, done, info = env.step(action)
                 
                 reward = ego_speed * 0.05
                 if done:
@@ -192,14 +196,14 @@ def main():
 
             time_step +=1
             env.render(mode = 'rgb_array')
-        writer.add_scalar("Q Loss/episode", policy.getQLoss(), episode_num)
-        writer.add_scalar("Mu Loss/episode", policy.getMuLoss(), episode_num)
+        writer.add_scalar("Q Loss/episode", policy.getCriticLoss(), episode_num)
+        writer.add_scalar("Mu Loss/episode", policy.getActorLoss(), episode_num)
         writer.add_scalar("episode reward/episode", episode_reward, episode_num)
 
         
         if is_train_mode and policy.isReadyForTraining():
             print("Memory size", policy.getMemorySize())
-            policy.startTraining()
+            policy.train()
         else:
             print("Memory size", policy.getMemorySize())
         print("episode num", episode_num)

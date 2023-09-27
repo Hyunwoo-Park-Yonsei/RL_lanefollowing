@@ -1,8 +1,28 @@
-import copy
+import gym
+import random
+import collections
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
+from stateRepresenter import StateRepresenter
+from torchsummary import summary
+import time
+import copy
+
+#Hyperparameters
+lr_mu           = 0.0005
+lr_q            = 0.0005
+lr_s            = 0.0001
+gamma           = 0.90
+batch_size      = 32
+buffer_limit    = 200000
+tau             = 0.01 # for target network soft update
+number_of_train = 30
+policy_noise=0.2,
+noise_clip=0.5,
+policy_freq=2
 
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -10,6 +30,33 @@ import torch.nn.functional as F
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
+class ReplayBuffer():
+    def __init__(self):
+        self.buffer = collections.deque(maxlen=buffer_limit)
+
+    def put(self, transition):
+        self.buffer.append(transition)
+    
+    def sample(self, n):
+        mini_batch = random.sample(self.buffer, n)
+        s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst, ego_speed_lst = [], [], [], [], [], []
+
+        for transition in mini_batch:
+            s, a, r, s_prime, done, ego_speed = transition
+            s_lst.append(s)
+            a_lst.append([a])
+            r_lst.append([r])
+            s_prime_lst.append(s_prime)
+            done_mask = 0.0 if done else 1.0 
+            done_mask_lst.append([done_mask])
+            ego_speed_lst.append(ego_speed)
+        
+        return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst, dtype=torch.float), \
+                torch.tensor(r_lst, dtype=torch.float), torch.tensor(s_prime_lst, dtype=torch.float), \
+                torch.tensor(done_mask_lst, dtype=torch.float), torch.tensor(ego_speed_lst, dtype=torch.float)
+    
+    def size(self):
+        return len(self.buffer)
 
 class Actor(nn.Module):
 	def __init__(self, state_dim, action_dim, max_action):
@@ -26,7 +73,6 @@ class Actor(nn.Module):
 		a = F.relu(self.l1(state))
 		a = F.relu(self.l2(a))
 		return self.max_action * torch.tanh(self.l3(a))
-
 
 class Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
@@ -66,46 +112,40 @@ class Critic(nn.Module):
 
 
 class TD3(object):
-	def __init__(
-		self,
-		state_dim,
-		action_dim,
-		max_action,
-		discount=0.99,
-		tau=0.005,
-		policy_noise=0.2,
-		noise_clip=0.5,
-		policy_freq=2
-	):
-
-		self.actor = Actor(state_dim, action_dim, max_action).to(device)
+	def __init__(self,state_dim, action_dim, max_action):
+        self.memory = ReplayBuffer()
+        self.actor = Actor(state_dim, action_dim, max_action)
 		self.actor_target = copy.deepcopy(self.actor)
 		self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=3e-4)
 
-		self.critic = Critic(state_dim, action_dim).to(device)
+		self.critic = Critic(state_dim, action_dim)
 		self.critic_target = copy.deepcopy(self.critic)
 		self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
 
+        self.state_representer = StateRepresenter()
+        self.state_optimizer = optim.Adam(self.state_representer.parameters(), lr=lr_s)
+
+        self.actor_loss = 0
+        self.critic_loss = 0
+
 		self.max_action = max_action
-		self.discount = discount
-		self.tau = tau
-		self.policy_noise = policy_noise
-		self.noise_clip = noise_clip
-		self.policy_freq = policy_freq
+		self.policy_noise = 0.1
+		self.noise_clip = 0.2
+		self.policy_freq = 2
 
 		self.total_it = 0
 
 
 	def select_action(self, state):
-		state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+		state = torch.FloatTensor(state.reshape(1, -1))
 		return self.actor(state).cpu().data.numpy().flatten()
 
 
-	def train(self, replay_buffer, batch_size=256):
+	def train(self):
 		self.total_it += 1
 
 		# Sample replay buffer 
-		state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+		state, action, next_state, reward, not_done = self.memory.sample(batch_size)
 
 		with torch.no_grad():
 			# Select action according to policy and add clipped noise
@@ -120,36 +160,36 @@ class TD3(object):
 			# Compute the target Q value
 			target_Q1, target_Q2 = self.critic_target(next_state, next_action)
 			target_Q = torch.min(target_Q1, target_Q2)
-			target_Q = reward + not_done * self.discount * target_Q
+			target_Q = reward + not_done * gamma * target_Q
 
 		# Get current Q estimates
 		current_Q1, current_Q2 = self.critic(state, action)
 
 		# Compute critic loss
-		critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+		self.critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
 
 		# Optimize the critic
 		self.critic_optimizer.zero_grad()
-		critic_loss.backward()
+		self.critic_loss.backward()
 		self.critic_optimizer.step()
 
 		# Delayed policy updates
 		if self.total_it % self.policy_freq == 0:
 
 			# Compute actor losse
-			actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
+			self.actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
 			
 			# Optimize the actor 
 			self.actor_optimizer.zero_grad()
-			actor_loss.backward()
+			self.actor_loss.backward()
 			self.actor_optimizer.step()
 
 			# Update the frozen target models
 			for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
-				target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+				target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 			for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
-				target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+				target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 
 	def save(self, filename):
@@ -168,3 +208,30 @@ class TD3(object):
 		self.actor.load_state_dict(torch.load(filename + "_actor"))
 		self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
 		self.actor_target = copy.deepcopy(self.actor)
+    
+    def getEvaluationAction(self, state, ego_speed):
+        a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
+        action = []
+        print("action",a[0][0].item(), a[0][1].item())
+        
+        action.append(a[0][0].item())
+        action.append(a[0][1].item())
+
+        return action
+    
+    def insertMemory(self, state, action, reward, s_prime, done, ego_speed):
+        self.memory.put((state, action ,reward / 10e-1, s_prime, done, ego_speed))
+    
+    def isMemoryFull(self):
+        return self.memory.size() >= buffer_limit
+    
+    def isReadyForTraining(self):
+        return self.memory.size() >= buffer_limit / 100
+
+    def getMemorySize(self):
+        return self.memory.size()
+    
+    def getCriticLoss(self):
+        return self.critic_loss
+    def getActorLoss(self):
+        return self.actor_loss
