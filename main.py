@@ -162,12 +162,15 @@ def main():
 				#     clipped_action[0] = 0
 				# s_prime, reward, done, truncated, info = env.step(action)
 				s_prime, reward, done, info = env.step(clipped_action)
+
+				ego_heading_prime = env.road.vehicles[0].heading / math.pi
+				ego_speed_prime = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading_prime)
 				
 				reward = ego_speed * 0.05
 				if done:
 					# print("done!!!!!!!!!!!!!")
 					reward += teraminal_penalty
-				policy.insertMemory(state, action, reward, s_prime, done, ego_speed)
+				policy.insertMemory(state, action, reward, s_prime, done, ego_speed, ego_speed_prime)
 				episode_reward += reward
 				state = s_prime
 				score += reward

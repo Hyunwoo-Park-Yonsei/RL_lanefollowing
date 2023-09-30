@@ -14,7 +14,7 @@ import copy
 #Hyperparameters
 lr_mu           = 3e-4
 lr_q            = 3e-4
-lr_s            = 0.001
+lr_s            = 3e-4
 gamma           = 0.99
 batch_size      = 32
 buffer_limit    = 100000
@@ -39,11 +39,11 @@ class ReplayBuffer():
 	def sample(self, n):
 		mini_batch = random.sample(self.buffer, n)
 		# s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst = [], [], [], [], []
-		s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst, ego_speed_lst = [], [], [], [], [], []
+		s_lst, a_lst, r_lst, s_prime_lst, done_mask_lst, ego_speed_lst, ego_speed_prime_lst = [], [], [], [], [], [], []
 		
 
 		for transition in mini_batch:
-			s, a, r, s_prime, done, ego_speed = transition
+			s, a, r, s_prime, done, ego_speed, ego_speed_prime = transition
 			# s, a, r, s_prime, done = transition
 			s_lst.append(s)
 			a_lst.append([a])
@@ -52,10 +52,13 @@ class ReplayBuffer():
 			done_mask = 0.0 if done else 1.0 
 			done_mask_lst.append([done_mask])
 			ego_speed_lst.append(ego_speed)
+			ego_speed_prime_lst.append(ego_speed_prime)
 		
 		return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst, dtype=torch.float), \
 		        torch.tensor(r_lst, dtype=torch.float), torch.tensor(s_prime_lst, dtype=torch.float), \
-		        torch.tensor(done_mask_lst, dtype=torch.float), torch.tensor(ego_speed_lst, dtype=torch.float)
+		        torch.tensor(done_mask_lst, dtype=torch.float), torch.tensor(ego_speed_lst, dtype=torch.float), \
+				torch.tensor(ego_speed_prime_lst, dtype=torch.float)
+
 		# return torch.tensor(s_lst, dtype=torch.float), torch.tensor(a_lst, dtype=torch.float), \
 		# torch.tensor(r_lst, dtype=torch.float), torch.tensor(s_prime_lst, dtype=torch.float), \
 		# torch.tensor(done_mask_lst, dtype=torch.float)
@@ -135,11 +138,11 @@ class TD3(object):
 		self.memory = ReplayBuffer()
 		self.actor = Actor(state_dim, action_dim, max_action)
 		self.actor_target = copy.deepcopy(self.actor)
-		self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=3e-4)
+		self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr_mu)
 
 		self.critic = Critic(state_dim, action_dim)
 		self.critic_target = copy.deepcopy(self.critic)
-		self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
+		self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr_q)
 
 		self.state_representer = StateRepresenter()
 		self.state_optimizer = optim.Adam(self.state_representer.parameters(), lr=lr_s)
@@ -165,11 +168,11 @@ class TD3(object):
 		self.total_it += 1
 
 		# Sample replay buffer 
-		state, action, reward, s_prime, not_done, ego_speed = self.memory.sample(batch_size)
+		state, action, reward, s_prime, not_done, ego_speed, ego_speed_prime = self.memory.sample(batch_size)
 		represented_state = self.state_representer(state)
 		represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 		represented_state_prime = self.state_representer(s_prime)
-		represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+		represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 
 		action = action.reshape(batch_size,2)
 		with torch.no_grad():
@@ -203,7 +206,7 @@ class TD3(object):
 		represented_state = self.state_representer(state)
 		represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 		represented_state_prime = self.state_representer(s_prime)
-		represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+		represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 
 		# Delayed policy updates
 		if self.total_it % self.policy_freq == 0:
@@ -224,6 +227,30 @@ class TD3(object):
 
 			for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
 				target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+
+	def getParams(self):
+		# print("q")
+		# for param in self.critic.parameters():
+		# 	print(param.grad)
+		# # print("q target")
+		# # for param in self.q_target.parameters():
+		# #     print(param)
+		# print("mu")
+		# for param in self.actor.parameters():
+		# 	print(param.grad)
+		# # print("mu target")
+		# # for param in self.mu_target.parameters():
+		# #     print(param)
+		print("state")
+		for param in self.state_representer.parameters():
+			print(param)    
+			# print("==========================================")
+			print(param.grad)
+		print("\n")
+		# self.q, self.q_target = QNet(), QNet()
+		# self.mu, self.mu_target = MuNet(), MuNet()
+
 
 
 	def save(self, filename):
@@ -253,8 +280,8 @@ class TD3(object):
 
 		return action
 	
-	def insertMemory(self, state, action, reward, s_prime, done, ego_speed):
-		self.memory.put((state, action ,reward / 10e-3, s_prime, done, ego_speed))
+	def insertMemory(self, state, action, reward, s_prime, done, ego_speed, ego_speed_prime):
+		self.memory.put((state, action ,reward / 10e-3, s_prime, done, ego_speed, ego_speed_prime))
 
 	def isMemoryFull(self):
 		return self.memory.size() >= buffer_limit
