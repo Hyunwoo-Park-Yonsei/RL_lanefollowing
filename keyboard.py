@@ -9,7 +9,7 @@ class KeyboardEventHandler:
         self.evt = _evt
         self.reset_flag = False
         self.activate = False
-
+        self.print = False
         self.training = True
 
     def isPressed(self,key):
@@ -35,10 +35,18 @@ class KeyboardEventHandler:
         
             if key == keyboard.KeyCode(char='r'):
                 self.reset_flag = True
+            
+            if key == keyboard.KeyCode(char='p'):
+                self.print = not self.print
+                if self.print: print("print mode")
+                else: print("Unprint mode")
 
     
     def isTrainingMode(self):
         return self.training
+    
+    def isPrintMode(self):
+        return self.print
                 
                 
 
