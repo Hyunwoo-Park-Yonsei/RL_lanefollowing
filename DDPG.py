@@ -16,7 +16,7 @@ lr_q            = 0.01
 lr_s            = 0.001
 gamma           = 0.90
 batch_size      = 64
-buffer_limit    = 30000
+buffer_limit    = 300
 tau             = 0.01 # for target network soft update
 number_of_train = 30
 
@@ -53,7 +53,7 @@ class ReplayBuffer():
 class MuNet(nn.Module):
     def __init__(self):
         super(MuNet, self).__init__()
-        self.fc1 = nn.Linear(13, 2)
+        self.fc1 = nn.Linear(8192+1, 2)
         self.bn = torch.nn.BatchNorm1d(2)
         self.clipping = torch.tensor([0.2, 0.2])
     
@@ -119,7 +119,7 @@ class MuNet(nn.Module):
         mu = self.fc1(x)
         # mu = F.relu(mu) - 1
         # mu = self.newActFunc(mu)
-        mu = self.newActFunc5(mu)
+        mu = F.tanh(mu) * 0.2
         # mu = mu * 10e-4
         # mu = self.newActFunc3(mu)
         # mu = torch.tanh(mu)
@@ -134,7 +134,7 @@ class QNet(nn.Module):
         # self.state_representer = state_representer
         # self.fc_s = nn.Linear(12, 64)
         # self.fc_a = nn.Linear(2,64)
-        self.fc_q = nn.Linear(15, 1)
+        self.fc_q = nn.Linear(8192+3, 1)
         self.bn = torch.nn.BatchNorm1d(1)
         # self.fc_out = nn.Linear(32,1)
 
@@ -146,7 +146,7 @@ class QNet(nn.Module):
         # print("h1 size", h1.size())
         # print("h2 size", h2.size())
 
-        h1 = x.reshape(batch_size,13)
+        h1 = x.reshape(batch_size,8192+1)
         h2 = a.reshape(batch_size,2)
         # print("h1 size", h1.size())
         # print("h2 size", h2.size())
@@ -182,8 +182,8 @@ class DDPG():
         self.ou_noise_accel = OrnsteinUhlenbeckNoise(mu=np.zeros(1))
         self.ou_noise_steer = OrnsteinUhlenbeckNoise(mu=np.zeros(1))
 
-        self.state_representer = StateRepresenter()
-        self.state_optimizer = optim.Adam(self.state_representer.parameters(), lr=lr_s)
+        # self.state_representer = StateRepresenter()
+        # self.state_optimizer = optim.Adam(self.state_representer.parameters(), lr=lr_s)
 
         self.q_loss = 0
         self.mu_loss = 0
@@ -197,13 +197,20 @@ class DDPG():
     def train(self):
         s,a,r,s_prime,done_mask,ego_speed, ego_speed_prime = self.memory.sample(batch_size)
 
-        represented_state = self.state_representer(s)
-        represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
-        represented_state_prime = self.state_representer(s_prime)
-        # print("represented_state_prime",represented_state_prime.size())
-        represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+        # represented_state = self.state_representer(s)
+        # represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+        # represented_state_prime = self.state_representer(s_prime)
+        # # print("represented_state_prime",represented_state_prime.size())
+        # represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+
         # represented_state = represented_state.detach().clone()
         # a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
+        print("s size", s.size())
+        print("ego speed", ego_speed.size())
+        represented_state = torch.cat([s, ego_speed.reshape(1,64)])
+        represented_state_prime = torch.cat([s_prime,ego_speed_prime.reshape(1,64)])
+        print("state size", represented_state.size())
+
         target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
         self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())
         self.q_optimizer.zero_grad()
@@ -213,11 +220,11 @@ class DDPG():
         self.q_optimizer.step()
 
 
-        represented_state = self.state_representer(s)
-        represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
-        represented_state_prime = self.state_representer(s_prime)
-        # print("represented_state_prime",represented_state_prime.size())
-        represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+        # represented_state = self.state_representer(s)
+        # represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+        # represented_state_prime = self.state_representer(s_prime)
+        # # print("represented_state_prime",represented_state_prime.size())
+        # represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 
         self.mu_optimizer.zero_grad()
         self.state_optimizer.zero_grad()
@@ -257,6 +264,8 @@ class DDPG():
         return action
     
     def insertMemory(self, state, action, reward, s_prime, done, ego_speed, ego_speed_prime):
+        state = np.reshape(state,64 * 128)
+
         self.memory.put((state, action ,reward / 10e-1, s_prime, done, ego_speed, ego_speed_prime))
     
     def isMemoryFull(self):
