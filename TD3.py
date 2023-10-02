@@ -77,10 +77,10 @@ class Actor(nn.Module):
 		self.max_action = max_action
 
 	def newActFunc5(self, x):
-		grad1 = 2 * 10e-3
-		grad2 = 1 * 10e-4
-		# grad1 = 4.5 * 10e-3
-		# grad2 = 3 * 10e-3
+		# grad1 = 2 * 10e-3
+		# grad2 = 1 * 10e-4
+		grad1 = 4.5 * 10e-2
+		grad2 = 3 * 10e-2
 		clip = 0.2
 		# higher grad out side of the clip
 		return torch.where(torch.abs(x) < clip / grad2, grad2 * x, grad1 * x - clip * (grad1 / grad2 - 1))
@@ -92,8 +92,20 @@ class Actor(nn.Module):
 		# print(state.size())
 		a = F.relu(self.l1(state))
 		# a = F.relu(self.l2(a))
-		return self.newActFunc5(self.l3(a))
-		# return F.tanh(self.l3(a)) * self.max_action
+		# return self.newActFunc5(self.l3(a))
+		return F.tanh(self.l3(a)) * self.max_action
+
+class OrnsteinUhlenbeckNoise:
+    def __init__(self, mu):
+        self.theta, self.dt, self.sigma = 0.1, 0.01, 0.1
+        self.mu = mu
+        self.x_prev = np.zeros_like(self.mu)
+
+    def __call__(self):
+        x = self.x_prev + self.theta * (self.mu - self.x_prev) * self.dt + \
+                self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.mu.shape)
+        self.x_prev = x
+        return x
 
 class Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
@@ -157,76 +169,85 @@ class TD3(object):
 
 		self.total_it = 0
 
+		self.ou_noise_accel = OrnsteinUhlenbeckNoise(mu=np.zeros(1))
+		self.ou_noise_steer = OrnsteinUhlenbeckNoise(mu=np.zeros(1))
+
+		self.noise_ratio = 0.3
+		self.noise_decay_ratio = 1 - 3 * 10e-5
+		self.noise_ths = 0.02
+
 
 	def select_action(self, state, ego_speed):
 		state = torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]).reshape(1,13)
 
 		act = self.actor(state).flatten()
-		return [act[0].item(),act[1].item()]
+		if(self.noise_ratio > self.noise_ths):
+			self.noise_ratio *= self.noise_decay_ratio
+		return [act[0].item() + self.noise_ratio * self.ou_noise_accel()[0], \
+				act[1].item() + self.noise_ratio * self.ou_noise_steer()[0]]
 
 	def train(self):
-		self.total_it += 1
+		for _ in range(number_of_train):
+			self.total_it += 1
+			# Sample replay buffer 
+			state, action, reward, s_prime, not_done, ego_speed, ego_speed_prime = self.memory.sample(batch_size)
+			represented_state = self.state_representer(state)
+			represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+			represented_state_prime = self.state_representer(s_prime)
+			represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 
-		# Sample replay buffer 
-		state, action, reward, s_prime, not_done, ego_speed, ego_speed_prime = self.memory.sample(batch_size)
-		represented_state = self.state_representer(state)
-		represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
-		represented_state_prime = self.state_representer(s_prime)
-		represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+			action = action.reshape(batch_size,2)
+			with torch.no_grad():
+				# Select action according to policy and add clipped noise
+				noise = (
+					torch.randn_like(action) * self.policy_noise
+				).clamp(-self.noise_clip, self.noise_clip)
+				next_action = (
+					self.actor_target(represented_state_prime) + noise
+				)
 
-		action = action.reshape(batch_size,2)
-		with torch.no_grad():
-			# Select action according to policy and add clipped noise
-			noise = (
-				torch.randn_like(action) * self.policy_noise
-			).clamp(-self.noise_clip, self.noise_clip)
-			next_action = (
-				self.actor_target(represented_state_prime) + noise
-			)
+				# Compute the target Q value
+				target_Q1, target_Q2 = self.critic_target(represented_state_prime, next_action)
+				target_Q = torch.min(target_Q1, target_Q2)
+				target_Q = reward + not_done * gamma * target_Q
 
-			# Compute the target Q value
-			target_Q1, target_Q2 = self.critic_target(represented_state_prime, next_action)
-			target_Q = torch.min(target_Q1, target_Q2)
-			target_Q = reward + not_done * gamma * target_Q
+			# Get current Q estimates
+			current_Q1, current_Q2 = self.critic(represented_state, action)
 
-		# Get current Q estimates
-		current_Q1, current_Q2 = self.critic(represented_state, action)
+			# Compute critic loss
+			self.critic_loss = (F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)) / 100000.0
 
-		# Compute critic loss
-		self.critic_loss = (F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)) / 100000000.0
-
-		# Optimize the critic
-		self.critic_optimizer.zero_grad()
-		self.state_optimizer.zero_grad()
-		self.critic_loss.backward()
-		self.state_optimizer.step()
-		self.critic_optimizer.step()
-
-		# Reinitialize the represented state
-		represented_state = self.state_representer(state)
-		represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
-		represented_state_prime = self.state_representer(s_prime)
-		represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
-
-		# Delayed policy updates
-		if self.total_it % self.policy_freq == 0:
-
-			# Compute actor loss
-			self.actor_loss = -self.critic.Q1(represented_state, self.actor(represented_state)).mean() / 100000.0
-			
-			# Optimize the actor 
-			self.actor_optimizer.zero_grad()
+			# Optimize the critic
+			self.critic_optimizer.zero_grad()
 			self.state_optimizer.zero_grad()
-			self.actor_loss.backward()
-			self.state_optimizer.step()
-			self.actor_optimizer.step()
+			self.critic_loss.backward()
+			# self.state_optimizer.step()
+			self.critic_optimizer.step()
 
-			# Update the frozen target models
-			for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
-				target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+			# Delayed policy updates
+			if self.total_it % self.policy_freq == 0:
+				# Reinitialize the represented state
+				represented_state = self.state_representer(state)
+				represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+				represented_state_prime = self.state_representer(s_prime)
+				represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 
-			for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
-				target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+				# Compute actor loss
+				self.actor_loss = -self.critic.Q1(represented_state, self.actor(represented_state)).mean() / 100.0
+				
+				# Optimize the actor 
+				self.actor_optimizer.zero_grad()
+				self.state_optimizer.zero_grad()
+				self.actor_loss.backward()
+				self.state_optimizer.step()
+				self.actor_optimizer.step()
+
+				# Update the frozen target models
+				for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
+					target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+				for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+					target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 
 	def getParams(self):
@@ -287,7 +308,7 @@ class TD3(object):
 		return self.memory.size() >= buffer_limit
 
 	def isReadyForTraining(self):
-		return self.memory.size() >= buffer_limit / 100
+		return self.memory.size() >= buffer_limit
 
 	def getMemorySize(self):
 		return self.memory.size()

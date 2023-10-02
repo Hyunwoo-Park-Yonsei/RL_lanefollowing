@@ -66,13 +66,13 @@ def main():
 	generate_data = False
 	num_of_other_vehicles = 0
 	num_of_lanes = 5
-	# env = gym.make('racetrack-v0')
-	env = gym.make('highway-v0')
+	env = gym.make('racetrack-v0')
+	# env = gym.make('highway-v0')
 	# env = gym.make('Pendulum-v1', max_episode_steps=200, autoreset=True)
 	# env.config["show_trajectories"] = True
 	env.config["vehicles_count"] = num_of_other_vehicles
-	env.config["simulation_frequency"] = 10
-	env.config["policy_frequency"] = 10
+	env.config["simulation_frequency"] = 3
+	env.config["policy_frequency"] = 3
 	env.configure({
 	    "lanes_count": num_of_lanes,
 	    "action": {
@@ -84,8 +84,8 @@ def main():
 	    # "off_road_reward" : -5,
 	    'offroad_terminal': True,
 	    # 'high_speed_reward': 0.001,
-	    'screen_height': 600,
-	    'screen_width': 600,
+	    'screen_height': 1000,
+	    'screen_width': 1000,
 	    'initial_lane_id': 2,
 	    'initial_speed': -1,
 	    'other_vehicles': 0,
@@ -108,7 +108,7 @@ def main():
 	policy = TD3(2, 0.2)
 
 	episode_reward = 0
-	max_time_step = 200000
+	max_time_step = 5000
 	episode_num = 0
 	max_speed = 0.6
 	print_interval = 20
@@ -209,6 +209,7 @@ def main():
 			time_step +=1
 			env.render(mode = 'rgb_array')
 			# env.render()
+		# print("time step", time_step)
 		writer.add_scalar("Q Loss/episode", policy.getCriticLoss(), episode_num)
 		writer.add_scalar("Mu Loss/episode", policy.getActorLoss(), episode_num)
 		writer.add_scalar("episode reward/episode", episode_reward, episode_num)
