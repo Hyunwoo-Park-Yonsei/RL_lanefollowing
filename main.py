@@ -36,7 +36,7 @@ time_steps = 2500
 max_action = 0.3
 expl_noise = 0.1
 batch_size = 256
-teraminal_penalty = -10
+teraminal_penalty = -100
 
 lat_P = 1
 lat_I = 0.15
@@ -50,7 +50,7 @@ use_keyboard = True
 max_iteration = int(1e6)
 def clip(action):
 	clip_action = [0,0]
-	max_clip = 0.1
+	max_clip = 0.2
 	for i in range(len(action)):
 		if action[i] > max_clip:
 			clip_action[i] = max_clip
@@ -70,8 +70,8 @@ def main():
 	# env = gym.make('highway-v0')
 	# env.config["show_trajectories"] = True
 	env.config["vehicles_count"] = num_of_other_vehicles
-	env.config["simulation_frequency"] = 10
-	env.config["policy_frequency"] = 10
+	env.config["simulation_frequency"] = 3
+	env.config["policy_frequency"] = 3
 	env.configure({
 		"lanes_count": num_of_lanes,
 		"action": {
@@ -79,9 +79,11 @@ def main():
 			"steering_range": [-np.pi / 4, np.pi / 4]
 		},
 		# "collision_reward": -100,
-		"duration": 600,
-		"on_road_reward" : 0,
-		# "off_road_reward" : -5,
+		"collision_reward": -5,
+		"action_reward": 0.3,
+		"offroad_penalty": -1,
+		"lane_centering_cost": 4,
+		"subgoal_reward_ratio": 1,
 		'offroad_terminal': True,
 		# 'high_speed_reward': 0.001,
 		'screen_height': 600,
@@ -108,7 +110,7 @@ def main():
 	policy = DDPG()
 
 	episode_reward = 0
-	max_time_step = 10000
+	max_time_step = 200000
 	episode_num = 0
 	max_speed = 0.3
 	
@@ -151,15 +153,12 @@ def main():
 				action = policy.getAction(state, ego_speed)
 				# print(action)
 				clipped_action = clip(action)
-				
-				if abs(ego_speed) > max_speed:
-					# print(ego_speed,action)
-					clipped_action[0] = 0
+			
 				s_prime, reward, done, info = env.step(clipped_action)
 				ego_heading_prime = env.road.vehicles[0].heading / math.pi
-				ego_speed_prime = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
+				ego_speed_prime = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading_prime)
 				
-				reward = ego_speed * 0.05
+				# reward = ego_speed * 0.05
 				if done:
 					# print("done!!!!!!!!!!!!!")
 					reward += teraminal_penalty
@@ -181,13 +180,12 @@ def main():
 				action = policy.getEvaluationAction(state, ego_speed)
 				# print(action)
 				clipped_action = clip(action)
-				
-				if abs(ego_speed) > max_speed:
-					# print(ego_speed,action)
-					clipped_action[0] = 0
+				# if abs(ego_speed) > max_speed:
+				# 	# print(ego_speed,action)
+				# 	clipped_action[0] = 0
 				s_prime, reward, done, info = env.step(clipped_action)
 				
-				reward = ego_speed * 0.05
+				# reward = ego_speed * 0.05
 				if done:
 					reward += teraminal_penalty
 				episode_reward += reward
@@ -211,14 +209,14 @@ def main():
 		# print("getParams", policy.getParams())
 
 		# if done or keyboard_listener.reset_flag:
-		if done:
-			obs = env.reset()
-			# keyboard_listener.reset_flag = False
-			# +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-			# Reset environment 
-			state, done = env.reset(), False
-			episode_reward = 0
-			episode_num += 1
+
+		obs = env.reset()
+		# keyboard_listener.reset_flag = False
+		# +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
+		# Reset environment 
+		state, done = env.reset(), False
+		episode_reward = 0
+		episode_num += 1
 			
 
 		if generate_data:

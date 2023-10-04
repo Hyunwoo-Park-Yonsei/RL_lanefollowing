@@ -14,12 +14,12 @@ from torch.optim.lr_scheduler import _LRScheduler
 #Hyperparameters
 lr_mu           = 0.005
 lr_q            = 0.01
-lr_s            = 0.001
+lr_s            = 0.02
 gamma           = 0.90
 batch_size      = 64
-buffer_limit    = 100000
+buffer_limit    = 30000
 tau             = 0.01 # for target network soft update
-number_of_train = 30
+number_of_train = 10
 
 class ReplayBuffer():
     def __init__(self):
@@ -54,8 +54,11 @@ class ReplayBuffer():
 class MuNet(nn.Module):
     def __init__(self):
         super(MuNet, self).__init__()
-        self.fc1 = nn.Linear(13, 2)
-        self.bn = torch.nn.BatchNorm1d(2)
+        self.fc1 = nn.Linear(13, 128)
+        self.bn1 = torch.nn.BatchNorm1d(128)
+        self.fc2 = nn.Linear(128, 64)
+        self.bn2 = torch.nn.BatchNorm1d(64)
+        self.fc3 = nn.Linear(64, 2)
         self.clipping = torch.tensor([0.2, 0.2])
     
     def newActFunc(self, x):
@@ -102,53 +105,42 @@ class MuNet(nn.Module):
 
     def forward(self, x):
         mu = self.fc1(x)
-        mu = self.bn(mu)
-        # mu = F.relu(mu) - 1
-        # mu = self.newActFunc(mu)
-        mu = self.newActFunc5(mu)
+        mu = self.bn1(mu)
+        mu = F.relu(mu)
+        mu = self.fc2(mu)
+        mu = self.bn2(mu)
+        mu = F.relu(mu)
+        mu = self.fc3(mu)
         mu = F.tanh(mu) * 0.2
         return mu
 
     def getAction(self, x):
         x = x.reshape(1,13)
-
         mu = self.fc1(x)
-        # mu = F.relu(mu) - 1
-        # mu = self.newActFunc(mu)
-        mu = self.newActFunc5(mu)
-        # mu = mu * 10e-4
-        # mu = self.newActFunc3(mu)
-        # mu = torch.tanh(mu)
-        # mu = torch.clamp(mu,-1,1)
-        # mu = mu * self.clipping
+        mu = F.relu(mu)
+        mu = self.fc2(mu)
+        mu = F.relu(mu)
+        mu = self.fc3(mu)
+        mu = F.tanh(mu) * 0.2
         return mu
 
 class QNet(nn.Module):
     def __init__(self):
         super(QNet, self).__init__()
-        # global state_representer
-        # self.state_representer = state_representer
-        # self.fc_s = nn.Linear(12, 64)
-        # self.fc_a = nn.Linear(2,64)
-        self.fc_q = nn.Linear(15, 1)
-        self.bn = torch.nn.BatchNorm1d(1)
+        self.fc_q1 = nn.Linear(15, 128)
+        self.bn1 = torch.nn.BatchNorm1d(128)
+        self.fc_q2 = nn.Linear(128, 64)
+        self.bn2 = torch.nn.BatchNorm1d(64)
+        self.fc_q3 = nn.Linear(64, 1)
         # self.fc_out = nn.Linear(32,1)
 
     def forward(self, x, a):
-        # self.state_representer = state_representer
-        # print("represented_state", represented_state.size())
-        # h1 = F.relu(self.fc_s(x))
-        # h2 = F.relu(self.fc_a(a))
-        # print("h1 size", h1.size())
-        # print("h2 size", h2.size())
-
         h1 = x.reshape(batch_size,13)
         h2 = a.reshape(batch_size,2)
-        # print("h1 size", h1.size())
-        # print("h2 size", h2.size())
         cat = torch.cat([h1,h2], dim=1)
-        q = self.bn(self.fc_q(cat))
-        # q = self.fc_out(q)
+        q = self.fc_q2(self.bn1(self.fc_q1(cat)))
+        q = self.fc_q3(self.bn2(q))
+
         return q
 
 class OrnsteinUhlenbeckNoise:
@@ -188,9 +180,9 @@ class DDPG():
         self.noise_decay_ratio = 1
         self.noise_ths = 0.02
 
-        self.scheduler_mu = optim.lr_scheduler.LambdaLR(self.mu_optimizer, lr_lambda = lambda epoch: 0.999 ** epoch)
-        self.scheduler_q = optim.lr_scheduler.LambdaLR(self.q_optimizer, lr_lambda = lambda epoch: 0.999 ** epoch)
-        self.scheduler_state = optim.lr_scheduler.LambdaLR(self.state_optimizer, lr_lambda = lambda epoch: 0.999 ** epoch)
+        self.scheduler_mu = optim.lr_scheduler.LambdaLR(self.mu_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
+        self.scheduler_q = optim.lr_scheduler.LambdaLR(self.q_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
+        self.scheduler_state = optim.lr_scheduler.LambdaLR(self.state_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
         
 
     def train(self):
@@ -199,49 +191,18 @@ class DDPG():
         represented_state = self.state_representer(s)
         represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
         represented_state_prime = self.state_representer(s_prime)
-        # print("represented_state_prime",represented_state_prime.size())
         represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
         
-        # a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
-        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())* 10e-2
-        # self.q_optimizer.zero_grad()
-        # q_loss.backward()
-        # self.q_optimizer.step()
-        
-        # self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() # That's all for the policy loss.
-        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-2 #* 10e9
-        # self.mu_optimizer.zero_grad()
-        # mu_loss.backward()
-        # self.mu_optimizer.step()
+        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())
+
+        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-4 #* 10e9
+
         self.q_optimizer.zero_grad()
         self.mu_optimizer.zero_grad()
         self.state_optimizer.zero_grad()
         loss = self.q_loss + self.mu_loss
         loss.backward()
-        # print("\n")
-        # print("mu", self.mu(represented_state))
-        # print("q",-self.q(represented_state, self.mu(represented_state)))
-        # print("q loss", self.q_loss, "mu loss", self.mu_loss)
-        # print("==================================")
-        # print("q")
-        # for param in self.q.parameters():
-        #     print(param)
-        #     print("---------------------------------")
-        #     print(param.grad)
-        # print("==================================")
-        # print("mu")
-        # for param in self.mu.parameters():
-        #     print(param)
-        #     print("---------------------------------")
-        #     print(param.grad)
-        # print("==================================")
-        # # print("state")
-        # # for param in self.state_representer.parameters():
-        # #     print(param)
-        # #     print("---------------------------------")
-        # #     print(param.grad)
-        # print("noise ratio", self.noise_ratio)
         self.q_optimizer.step()
         self.mu_optimizer.step()
         self.state_optimizer.step()
@@ -254,7 +215,6 @@ class DDPG():
     
     def getAction(self, state, ego_speed):
         if not self.isMemoryFull():
-            # print(self.ou_noise_accel()[0],self.ou_noise_steer()[0])
             return [self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0]]
         a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         action = []
@@ -268,7 +228,7 @@ class DDPG():
     def getEvaluationAction(self, state, ego_speed):
         a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         action = []
-        print("action",a[0][0].item(), a[0][1].item())
+        # print("action",a[0][0].item(), a[0][1].item())
         
         action.append(a[0][0].item())
         action.append(a[0][1].item())
@@ -324,36 +284,3 @@ class DDPG():
         return self.q_loss
     def getMuLoss(self):
         return self.mu_loss
-
-    # def main():
-        # env = gym.make('Pendulum-v1', max_episode_steps=200, autoreset=True, render_mode="rgb_array")
-        # print_interval = 20
-        
-        # for n_epi in range(10000):
-        #     # s, _ = env.reset()
-        #     done = False
-
-        #     count = 0
-        #     while count < 200 and not done:
-                # a = mu(torch.from_numpy(s).float()) 
-                # a = a.item() + ou_noise()[0]
-                # s_prime, r, done, truncated, info = env.step([a])
-                # memory.put((s,a,r/100.0,s_prime,done))
-                # score +=r
-                # s = s_prime
-                # count += 1
-                    
-            # if memory.size()>2000:
-                # for i in range(10):
-                    # train(mu, mu_target, q, q_target, memory, q_optimizer, mu_optimizer)
-                    # soft_update(mu, mu_target)
-                    # soft_update(q,  q_target)
-            
-            # if n_epi%print_interval==0 and n_epi!=0:
-            #     print("# of episode :{}, avg score : {:.1f}".format(n_epi, score/print_interval))
-            #     score = 0.0
-
-        # env.close()
-
-# if __name__ == '__main__':
-#     main()
