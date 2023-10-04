@@ -58,8 +58,9 @@ class MuNet(nn.Module):
         self.bn1 = torch.nn.BatchNorm1d(128)
         self.fc2 = nn.Linear(128, 64)
         self.bn2 = torch.nn.BatchNorm1d(64)
-        self.fc3 = nn.Linear(64, 2)
+        self.fc3 = nn.Linear(64, 1)
         self.clipping = torch.tensor([0.2, 0.2])
+        self.ELU = torch.nn.ELU()
     
     def newActFunc(self, x):
         # print(x)
@@ -112,6 +113,7 @@ class MuNet(nn.Module):
         mu = F.relu(mu)
         mu = self.fc3(mu)
         mu = F.tanh(mu) * 0.2
+        # mu = self.newActFunc5(mu)
         return mu
 
     def getAction(self, x):
@@ -122,12 +124,13 @@ class MuNet(nn.Module):
         mu = F.relu(mu)
         mu = self.fc3(mu)
         mu = F.tanh(mu) * 0.2
+        # mu = self.newActFunc5(mu)
         return mu
 
 class QNet(nn.Module):
     def __init__(self):
         super(QNet, self).__init__()
-        self.fc_q1 = nn.Linear(15, 128)
+        self.fc_q1 = nn.Linear(14, 128)
         self.bn1 = torch.nn.BatchNorm1d(128)
         self.fc_q2 = nn.Linear(128, 64)
         self.bn2 = torch.nn.BatchNorm1d(64)
@@ -136,7 +139,7 @@ class QNet(nn.Module):
 
     def forward(self, x, a):
         h1 = x.reshape(batch_size,13)
-        h2 = a.reshape(batch_size,2)
+        h2 = a.reshape(batch_size,1)
         cat = torch.cat([h1,h2], dim=1)
         q = self.fc_q2(self.bn1(self.fc_q1(cat)))
         q = self.fc_q3(self.bn2(q))
@@ -194,19 +197,25 @@ class DDPG():
         represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
         
         target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
-        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())
-
-        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-4 #* 10e9
-
+        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach()) * 10e-3
         self.q_optimizer.zero_grad()
+        self.state_optimizer.zero_grad()
+        self.q_loss.backward()
+        self.q_optimizer.step()
+        self.state_optimizer.step()
+
+        represented_state = self.state_representer(s)
+        represented_state = torch.cat([represented_state.reshape(12,batch_size), torch.tensor(ego_speed, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+        represented_state_prime = self.state_representer(s_prime)
+        represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
+
+        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-2 #* 10e9
         self.mu_optimizer.zero_grad()
         self.state_optimizer.zero_grad()
-        loss = self.q_loss + self.mu_loss
-        loss.backward()
-        self.q_optimizer.step()
+        self.mu_loss.backward()
         self.mu_optimizer.step()
         self.state_optimizer.step()
-        
+       
 
         
     def soft_update(self, net, net_target):
@@ -214,14 +223,24 @@ class DDPG():
             param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
     
     def getAction(self, state, ego_speed):
+        # if not self.isMemoryFull():
+        #     return [self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0]]
+        # a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
+        # action = []
+        # print("action",a[0][0].item(), a[0][1].item(), self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0])
+        
+        # action.append(a[0][0].item() + self.noise_ratio * self.ou_noise_accel()[0])
+        # action.append(a[0][1].item() + self.noise_ratio * self.ou_noise_steer()[0])
+
+        # return action
         if not self.isMemoryFull():
-            return [self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0]]
+            # print([self.noise_ratio * self.ou_noise_accel()[0]])
+            return [self.noise_ratio * self.ou_noise_accel()[0]]
         a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         action = []
-        print("action",a[0][0].item(), a[0][1].item(), self.noise_ratio * self.ou_noise_accel()[0], self.noise_ratio * self.ou_noise_steer()[0])
+        # print("action",a[0][0].item(), self.noise_ratio * self.ou_noise_accel()[0])
         
         action.append(a[0][0].item() + self.noise_ratio * self.ou_noise_accel()[0])
-        action.append(a[0][1].item() + self.noise_ratio * self.ou_noise_steer()[0])
 
         return action
     
@@ -260,22 +279,31 @@ class DDPG():
     
     def getParams(self):
         print("q")
+        print()
+        print()
         for param in self.q.parameters():
+            print(param)
+            print("----------------")
             print(param.grad)
-        # print("q target")
-        # for param in self.q_target.parameters():
-        #     print(param)
+            print("=================")
+
         print("mu")
+        print()
+        print()
         for param in self.mu.parameters():
+            print(param)
+            print("----------------")
             print(param.grad)
-        # print("mu target")
-        # for param in self.mu_target.parameters():
-        #     print(param)
+            print("=================")
+
         print("state")
+        print()
+        print()
         for param in self.state_representer.parameters():
-            # print(param)    
-            # print("==========================================")
+            print(param)
+            print("----------------")
             print(param.grad)
+            print("=================")
         print("\n")
         # self.q, self.q_target = QNet(), QNet()
         # self.mu, self.mu_target = MuNet(), MuNet()

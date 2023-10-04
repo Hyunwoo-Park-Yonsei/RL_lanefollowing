@@ -6,8 +6,8 @@ import torch.optim as optim
 class StateRepresenter(nn.Module):
   def __init__(self):
     super(StateRepresenter, self).__init__()
-    self.conv1 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=(1, 1))
-    # self.conv2 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=(1, 1))
+    self.conv1 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=1, padding=(1, 1))
+    self.conv2 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=1, padding=(1, 1))
     # self.conv3 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=(1, 1))
     # self.conv4 = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=3, stride=2, padding=(1, 1))
     self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
@@ -19,11 +19,11 @@ class StateRepresenter(nn.Module):
     # print("연산 전", x.size())
     x = self.pool(F.relu(self.conv1(x)))
     # print("conv1 연산 후", x.size())
-    # x = self.pool(F.relu(self.conv2(x)))
+    x = self.pool(F.relu(self.conv2(x)))
     # print("conv2 연산 후",x.size())
     # x = self.pool(F.relu(self.conv3(x)))
     # print("conv3 연산 후",x.size())
-    # x = self.pool(F.relu(self.conv4(x)))
+    # x = self.pool(F.relu(self.conv4(x)))  
     # print("conv4 연산 후",x.size())
     x = x.view(x.size(0), -1) # flatten
     # print("x", x.size())

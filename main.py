@@ -66,8 +66,8 @@ def main():
 	generate_data = False
 	num_of_other_vehicles = 0
 	num_of_lanes = 5
-	env = gym.make('racetrack-v0')
-	# env = gym.make('highway-v0')
+	# env = gym.make('racetrack-v0')
+	env = gym.make('highway-v0')
 	# env.config["show_trajectories"] = True
 	env.config["vehicles_count"] = num_of_other_vehicles
 	env.config["simulation_frequency"] = 3
@@ -76,6 +76,7 @@ def main():
 		"lanes_count": num_of_lanes,
 		"action": {
 			"type" : "ContinuousAction",
+			"longitudinal": False,
 			"steering_range": [-np.pi / 4, np.pi / 4]
 		},
 		# "collision_reward": -100,
@@ -151,7 +152,10 @@ def main():
 				ego_heading = env.road.vehicles[0].heading / math.pi
 				ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
 				action = policy.getAction(state, ego_speed)
-				# print(action)
+				if keyboard_listener.isPrintAction():
+					print("action", action)
+				if keyboard_listener.isPrintParam():
+					policy.getParams()
 				clipped_action = clip(action)
 			
 				s_prime, reward, done, info = env.step(clipped_action)
@@ -169,6 +173,10 @@ def main():
 				# fig, axes = plt.subplots(ncols=4, figsize=(12, 5))
 				# fig_state = state
 				# fig_state = fig_state.reshape(128,64)
+				# for a in fig_state:
+				# 	for b in a:
+				# 		print(b, end=" ")
+				# 	print()
 				# # print("fig size", np.shape(fig_state))
 				# for i, ax in enumerate(axes.flat):
 				#     ax.imshow(fig_state, cmap=plt.get_cmap('gray'))
