@@ -36,7 +36,7 @@ time_steps = 2500
 max_action = 0.3
 expl_noise = 0.1
 batch_size = 256
-teraminal_penalty = -100
+teraminal_penalty = -10
 
 lat_P = 1
 lat_I = 0.15
@@ -76,7 +76,7 @@ def main():
 		"lanes_count": num_of_lanes,
 		"action": {
 			"type" : "ContinuousAction",
-			"longitudinal": False,
+			"longitudinal": True,
 			"steering_range": [-np.pi / 4, np.pi / 4]
 		},
 		# "collision_reward": -100,
@@ -90,7 +90,7 @@ def main():
 		'screen_height': 600,
 		'screen_width': 600,
 		'initial_lane_id': 2,
-		'initial_speed': -1,
+		'initial_speed': 0,
 		'other_vehicles': 0,
 		"observation":{
 		   "type": "GrayscaleObservation",
@@ -114,6 +114,7 @@ def main():
 	max_time_step = 200000
 	episode_num = 0
 	max_speed = 0.3
+	max_out_of_map_count = 20
 	
 	# ego = env.road.vehicles[0].position
 	# ego_lane_idx = np.array(env.road.network.get_closest_lane_index(np.array(ego))[2],np.float32)
@@ -141,31 +142,35 @@ def main():
 			is_train_mode = True
 		else:
 			is_train_mode = False
-		while time_step < max_time_step and not done:
+		out_of_map_count = 0
+		while time_step < max_time_step and out_of_map_count < max_out_of_map_count:
 			if use_keyboard and keyboard_listener.is_space_pressed:
 				print("wait!!")
 			while keyboard_listener.is_space_pressed:
 				pass
+			
+			if policy.isMemoryFull():
+				policy.getM
 
 			if is_train_mode:
 				ego = env.road.vehicles[0].position
 				ego_heading = env.road.vehicles[0].heading / math.pi
 				ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
+				# print("ego speed", ego_speed)
 				action = policy.getAction(state, ego_speed)
 				if keyboard_listener.isPrintAction():
 					print("action", action)
 				if keyboard_listener.isPrintParam():
 					policy.getParams()
-				clipped_action = clip(action)
-			
-				s_prime, reward, done, info = env.step(clipped_action)
+				action = clip(action)
+				s_prime, reward, done, info = env.step(action)
 				ego_heading_prime = env.road.vehicles[0].heading / math.pi
 				ego_speed_prime = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading_prime)
 				
-				# reward = ego_speed * 0.05
-				if done:
+				reward = ego_speed * 0.05
+				# if done:
 					# print("done!!!!!!!!!!!!!")
-					reward += teraminal_penalty
+					# reward += teraminal_penalty
 				policy.insertMemory(state, action, reward, s_prime, done, ego_speed, ego_speed_prime)
 				episode_reward += reward
 				state = s_prime
@@ -185,19 +190,28 @@ def main():
 				ego = env.road.vehicles[0].position
 				ego_heading = env.road.vehicles[0].heading / math.pi
 				ego_speed = env.road.vehicles[0].speed / 3.6 * math.cos(ego_heading)
+				# print("ego speed", ego_speed)
 				action = policy.getEvaluationAction(state, ego_speed)
 				# print(action)
-				clipped_action = clip(action)
+				action = clip(action)
 				# if abs(ego_speed) > max_speed:
 				# 	# print(ego_speed,action)
 				# 	clipped_action[0] = 0
-				s_prime, reward, done, info = env.step(clipped_action)
+				if keyboard_listener.isPrintAction():
+					print("action", action)
+				if keyboard_listener.isPrintParam():
+					policy.getParams()
+				s_prime, reward, done, info = env.step(action)
 				
-				# reward = ego_speed * 0.05
-				if done:
-					reward += teraminal_penalty
+				reward = ego_speed * 0.05
+				# if done:
+				# 	reward += teraminal_penalty
 				episode_reward += reward
 				state = s_prime
+
+			if not env.vehicle.on_road:
+				reward -= 1.0
+				out_of_map_count +=1
 
 			time_step +=1
 			env.render()

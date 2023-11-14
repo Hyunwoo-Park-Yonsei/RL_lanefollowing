@@ -12,14 +12,14 @@ import time
 from torch.optim.lr_scheduler import _LRScheduler
 
 #Hyperparameters
-lr_mu           = 0.005
+lr_mu           = 0.01
 lr_q            = 0.01
-lr_s            = 0.02
+lr_s            = 0.01
 gamma           = 0.90
 batch_size      = 64
-buffer_limit    = 30000
-tau             = 0.01 # for target network soft update
-number_of_train = 10
+buffer_limit    = 100000
+tau             = 0.05 # for target network soft update
+number_of_train = 100
 
 class ReplayBuffer():
     def __init__(self):
@@ -58,7 +58,7 @@ class MuNet(nn.Module):
         self.bn1 = torch.nn.BatchNorm1d(128)
         self.fc2 = nn.Linear(128, 64)
         self.bn2 = torch.nn.BatchNorm1d(64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc3 = nn.Linear(64, 2)
         self.clipping = torch.tensor([0.2, 0.2])
         self.ELU = torch.nn.ELU()
     
@@ -98,7 +98,7 @@ class MuNet(nn.Module):
         # grad2 = 1 * 10e-4
         grad1 = 1.5 * 10e-3
         grad2 = 8 * 10e-4
-        clip = 0.2
+        clip = 0.1
         # higher grad out side of the clip
         return torch.where(torch.abs(x) < clip / grad2, grad2 * x, grad1 * x - clip * (grad1 / grad2 - 1))
         # lower grad out side of the clip
@@ -112,8 +112,8 @@ class MuNet(nn.Module):
         mu = self.bn2(mu)
         mu = F.relu(mu)
         mu = self.fc3(mu)
-        mu = F.tanh(mu) * 0.2
-        # mu = self.newActFunc5(mu)
+        # mu = F.tanh(mu) * 0.1
+        mu = self.newActFunc5(mu)
         return mu
 
     def getAction(self, x):
@@ -123,14 +123,14 @@ class MuNet(nn.Module):
         mu = self.fc2(mu)
         mu = F.relu(mu)
         mu = self.fc3(mu)
-        mu = F.tanh(mu) * 0.2
-        # mu = self.newActFunc5(mu)
+        # mu = F.tanh(mu) * 0.1
+        mu = self.newActFunc5(mu)
         return mu
 
 class QNet(nn.Module):
     def __init__(self):
         super(QNet, self).__init__()
-        self.fc_q1 = nn.Linear(14, 128)
+        self.fc_q1 = nn.Linear(15, 128)
         self.bn1 = torch.nn.BatchNorm1d(128)
         self.fc_q2 = nn.Linear(128, 64)
         self.bn2 = torch.nn.BatchNorm1d(64)
@@ -139,7 +139,7 @@ class QNet(nn.Module):
 
     def forward(self, x, a):
         h1 = x.reshape(batch_size,13)
-        h2 = a.reshape(batch_size,1)
+        h2 = a.reshape(batch_size,2)
         cat = torch.cat([h1,h2], dim=1)
         q = self.fc_q2(self.bn1(self.fc_q1(cat)))
         q = self.fc_q3(self.bn2(q))
@@ -179,7 +179,8 @@ class DDPG():
         self.q_loss = 0
         self.mu_loss = 0
 
-        self.noise_ratio = 0.1
+        self.steer_noise_ratio = 0.03
+        self.accel_noise_ratio = 0.03
         self.noise_decay_ratio = 1
         self.noise_ths = 0.02
 
@@ -197,7 +198,7 @@ class DDPG():
         represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
         
         target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
-        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach()) * 10e-3
+        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())
         self.q_optimizer.zero_grad()
         self.state_optimizer.zero_grad()
         self.q_loss.backward()
@@ -209,7 +210,7 @@ class DDPG():
         represented_state_prime = self.state_representer(s_prime)
         represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
 
-        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() * 10e-2 #* 10e9
+        self.mu_loss = -self.q(represented_state, self.mu(represented_state)).mean() #* 10e9
         self.mu_optimizer.zero_grad()
         self.state_optimizer.zero_grad()
         self.mu_loss.backward()
@@ -233,14 +234,17 @@ class DDPG():
         # action.append(a[0][1].item() + self.noise_ratio * self.ou_noise_steer()[0])
 
         # return action
+
+        a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         if not self.isMemoryFull():
             # print([self.noise_ratio * self.ou_noise_accel()[0]])
-            return [self.noise_ratio * self.ou_noise_accel()[0]]
-        a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
-        action = []
-        # print("action",a[0][0].item(), self.noise_ratio * self.ou_noise_accel()[0])
+            return [a[0][0].item() + self.accel_noise_ratio * self.ou_noise_accel()[0], a[0][1].item() + self.steer_noise_ratio * self.ou_noise_steer()[0]]
         
-        action.append(a[0][0].item() + self.noise_ratio * self.ou_noise_accel()[0])
+        action = []
+        # print("action",a[0][0].item(), self.noise_ratio * self.ou_noise_accel()[0], )
+        
+        action.append(a[0][0].item() + self.accel_noise_ratio * self.ou_noise_accel()[0])
+        action.append(a[0][1].item() + self.steer_noise_ratio * self.ou_noise_steer()[0])
 
         return action
     
@@ -260,15 +264,16 @@ class DDPG():
     def isMemoryFull(self):
         return self.memory.size() >= buffer_limit
     
+    def getMemory(self):
+        return self.memory
+    
     def startTraining(self):
         print("Start Training !")
-        print("action ratio", self.noise_ratio, "accel noise", self.ou_noise_accel()[0], "steer", self.ou_noise_steer()[0])
+        print("accel noise", self.accel_noise_ratio * self.ou_noise_accel()[0], "steer", self.steer_noise_ratio * self.ou_noise_steer()[0])
         for i in range(number_of_train):
             self.train()
             self.soft_update(self.mu, self.mu_target)
             self.soft_update(self.q, self.q_target)
-        if(self.noise_ratio > self.noise_ths):
-            self.noise_ratio *= self.noise_decay_ratio
         
         self.scheduler_mu.step()
         self.scheduler_q.step()
