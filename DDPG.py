@@ -286,9 +286,9 @@ class DDPG():
             self.soft_update(self.mu, self.mu_target)
             self.soft_update(self.q, self.q_target)
         
-        self.scheduler_mu.step()
-        self.scheduler_q.step()
-        self.scheduler_state.step()
+        # self.scheduler_mu.step()
+        # self.scheduler_q.step()
+        # self.scheduler_state.step()
 
     def getMemorySize(self):
         return self.memory.size() 
