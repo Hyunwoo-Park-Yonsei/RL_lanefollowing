@@ -194,9 +194,9 @@ class DDPG():
         self.noise_decay_ratio = 1
         self.noise_ths = 0.02
 
-        self.scheduler_mu = optim.lr_scheduler.LambdaLR(self.mu_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
-        self.scheduler_q = optim.lr_scheduler.LambdaLR(self.q_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
-        self.scheduler_state = optim.lr_scheduler.LambdaLR(self.state_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
+        # self.scheduler_mu = optim.lr_scheduler.LambdaLR(self.mu_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
+        # self.scheduler_q = optim.lr_scheduler.LambdaLR(self.q_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
+        # self.scheduler_state = optim.lr_scheduler.LambdaLR(self.state_optimizer, lr_lambda = lambda epoch: 0.9999 ** epoch)
         
 
     def train(self):
@@ -248,7 +248,8 @@ class DDPG():
         a = self.mu.getAction(torch.cat([self.state_representer(torch.from_numpy(state).float()).reshape(12,1), torch.tensor(ego_speed, dtype = torch.float).reshape(1,1)]))
         if not self.isMemoryFull():
             # print([self.noise_ratio * self.ou_noise_accel()[0]])
-            return [a[0][0].item() + self.accel_noise_ratio * self.ou_noise_accel()[0], a[0][1].item() + self.steer_noise_ratio * self.ou_noise_steer()[0]]
+            # return [a[0][0].item() + self.accel_noise_ratio * self.ou_noise_accel()[0], a[0][1].item() + self.steer_noise_ratio * self.ou_noise_steer()[0]]
+            return [self.accel_noise_ratio * self.ou_noise_accel()[0], self.steer_noise_ratio * self.ou_noise_steer()[0]]
         
         action = []
         # print("action",a[0][0].item(), self.noise_ratio * self.ou_noise_accel()[0], )
