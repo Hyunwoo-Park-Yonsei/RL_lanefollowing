@@ -149,9 +149,6 @@ def main():
 			while keyboard_listener.is_space_pressed:
 				pass
 			
-			if policy.isMemoryFull():
-				policy.getM
-
 			if is_train_mode:
 				ego = env.road.vehicles[0].position
 				ego_heading = env.road.vehicles[0].heading / math.pi

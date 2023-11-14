@@ -15,11 +15,11 @@ from torch.optim.lr_scheduler import _LRScheduler
 lr_mu           = 0.01
 lr_q            = 0.01
 lr_s            = 0.01
-gamma           = 0.90
+gamma           = 0.99
 batch_size      = 64
-buffer_limit    = 100000
+buffer_limit    = 30000
 tau             = 0.05 # for target network soft update
-number_of_train = 100
+number_of_train = 30
 
 class ReplayBuffer():
     def __init__(self):
@@ -55,10 +55,15 @@ class MuNet(nn.Module):
     def __init__(self):
         super(MuNet, self).__init__()
         self.fc1 = nn.Linear(13, 128)
+        nn.init.kaiming_normal_(self.fc1.weight, nonlinearity='relu')
         self.bn1 = torch.nn.BatchNorm1d(128)
+
         self.fc2 = nn.Linear(128, 64)
+        nn.init.kaiming_normal_(self.fc2.weight, nonlinearity='relu')
         self.bn2 = torch.nn.BatchNorm1d(64)
+
         self.fc3 = nn.Linear(64, 2)
+        nn.init.kaiming_normal_(self.fc3.weight, nonlinearity='relu')
         self.clipping = torch.tensor([0.2, 0.2])
         self.ELU = torch.nn.ELU()
     
@@ -112,8 +117,8 @@ class MuNet(nn.Module):
         mu = self.bn2(mu)
         mu = F.relu(mu)
         mu = self.fc3(mu)
-        # mu = F.tanh(mu) * 0.1
-        mu = self.newActFunc5(mu)
+        mu = F.tanh(mu) * 0.1
+        # mu = self.newActFunc5(mu)
         return mu
 
     def getAction(self, x):
@@ -123,18 +128,23 @@ class MuNet(nn.Module):
         mu = self.fc2(mu)
         mu = F.relu(mu)
         mu = self.fc3(mu)
-        # mu = F.tanh(mu) * 0.1
-        mu = self.newActFunc5(mu)
+        mu = F.tanh(mu) * 0.1
+        # mu = self.newActFunc5(mu)
         return mu
 
 class QNet(nn.Module):
     def __init__(self):
         super(QNet, self).__init__()
         self.fc_q1 = nn.Linear(15, 128)
+        nn.init.kaiming_normal_(self.fc_q1.weight, nonlinearity='relu')
         self.bn1 = torch.nn.BatchNorm1d(128)
+
         self.fc_q2 = nn.Linear(128, 64)
+        nn.init.kaiming_normal_(self.fc_q2.weight, nonlinearity='relu')
         self.bn2 = torch.nn.BatchNorm1d(64)
+
         self.fc_q3 = nn.Linear(64, 1)
+        nn.init.kaiming_normal_(self.fc_q3.weight, nonlinearity='relu')
         # self.fc_out = nn.Linear(32,1)
 
     def forward(self, x, a):
@@ -179,8 +189,8 @@ class DDPG():
         self.q_loss = 0
         self.mu_loss = 0
 
-        self.steer_noise_ratio = 0.03
-        self.accel_noise_ratio = 0.03
+        self.steer_noise_ratio = 0.1
+        self.accel_noise_ratio = 0.1
         self.noise_decay_ratio = 1
         self.noise_ths = 0.02
 
@@ -259,7 +269,7 @@ class DDPG():
         return action
     
     def insertMemory(self, state, action, reward, s_prime, done, ego_speed, ego_speed_prime):
-        self.memory.put((state, action ,reward / 10e-1, s_prime, done, ego_speed, ego_speed_prime))
+        self.memory.put((state, action ,reward / 10e3, s_prime, done, ego_speed, ego_speed_prime))
     
     def isMemoryFull(self):
         return self.memory.size() >= buffer_limit
@@ -284,8 +294,6 @@ class DDPG():
     
     def getParams(self):
         print("q")
-        print()
-        print()
         for param in self.q.parameters():
             print(param)
             print("----------------")
@@ -293,8 +301,6 @@ class DDPG():
             print("=================")
 
         print("mu")
-        print()
-        print()
         for param in self.mu.parameters():
             print(param)
             print("----------------")
@@ -302,14 +308,15 @@ class DDPG():
             print("=================")
 
         print("state")
-        print()
-        print()
         for param in self.state_representer.parameters():
             print(param)
             print("----------------")
             print(param.grad)
             print("=================")
         print("\n")
+        print("=================")
+        print("=================")
+        print("=================")
         # self.q, self.q_target = QNet(), QNet()
         # self.mu, self.mu_target = MuNet(), MuNet()
 
