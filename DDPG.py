@@ -12,6 +12,9 @@ import time
 from torch.optim.lr_scheduler import _LRScheduler
 
 #Hyperparameters
+# lr_mu           = 0.01
+# lr_q            = 0.01
+# lr_s            = 0.01
 lr_mu           = 0.01
 lr_q            = 0.01
 lr_s            = 0.01
@@ -38,7 +41,7 @@ class ReplayBuffer():
             a_lst.append([a])
             r_lst.append([r])
             s_prime_lst.append(s_prime)
-            done_mask = 0.0 if done else 1.0 
+            done_mask = 1.0 
             done_mask_lst.append([done_mask])
             ego_speed_lst.append(ego_speed)
             ego_speed_prime_lst.append(ego_speed_prime)
@@ -110,6 +113,7 @@ class MuNet(nn.Module):
         # return torch.where(torch.abs(x) < clip / grad1, grad1 * x, grad2 * x - clip * (grad2 / grad1 - 1))
 
     def forward(self, x):
+        # x = F.normalize(x, dim=0)
         mu = self.fc1(x)
         mu = self.bn1(mu)
         mu = F.relu(mu)
@@ -122,6 +126,7 @@ class MuNet(nn.Module):
         return mu
 
     def getAction(self, x):
+        # x = F.normalize(x, dim=0)
         x = x.reshape(1,13)
         mu = self.fc1(x)
         mu = F.relu(mu)
@@ -151,6 +156,7 @@ class QNet(nn.Module):
         h1 = x.reshape(batch_size,13)
         h2 = a.reshape(batch_size,2)
         cat = torch.cat([h1,h2], dim=1)
+        # cat = F.normalize(cat, dim=0)
         q = self.fc_q2(self.bn1(self.fc_q1(cat)))
         q = self.fc_q3(self.bn2(q))
 
@@ -207,8 +213,8 @@ class DDPG():
         represented_state_prime = self.state_representer(s_prime)
         represented_state_prime = torch.cat([represented_state_prime.reshape(12,batch_size), torch.tensor(ego_speed_prime, dtype = torch.float).reshape(1,batch_size)]).reshape(batch_size,13)
         
-        target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime)) * done_mask
-        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach())
+        target = r + gamma * self.q_target(represented_state_prime, self.mu_target(represented_state_prime))
+        self.q_loss = F.smooth_l1_loss(self.q(represented_state,a), target.detach()) #* 10e9
         self.q_optimizer.zero_grad()
         self.state_optimizer.zero_grad()
         self.q_loss.backward()
@@ -270,7 +276,7 @@ class DDPG():
         return action
     
     def insertMemory(self, state, action, reward, s_prime, done, ego_speed, ego_speed_prime):
-        self.memory.put((state, action ,reward / 10e3, s_prime, done, ego_speed, ego_speed_prime))
+        self.memory.put((state, action ,reward, s_prime, done, ego_speed, ego_speed_prime))
     
     def isMemoryFull(self):
         return self.memory.size() >= buffer_limit

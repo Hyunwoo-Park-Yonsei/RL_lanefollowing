@@ -20,6 +20,7 @@ class StateRepresenter(nn.Module):
     self.ELU = torch.nn.ELU()
   
   def forward(self, x):
+    x = F.normalize(x, dim=0)
     # print("연산 전", x.size())
     x = self.pool(F.relu(self.conv1(x)))
     # print("conv1 연산 후", x.size())
